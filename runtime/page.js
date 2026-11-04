@@ -5,7 +5,15 @@ import { makeFilm } from "/programs/film.js";
 import { scanFrame } from "./scan.js";
 
 const ws = new WebSocket(`ws://${location.host}/pipe`); ws.binaryType = "arraybuffer";
-const say = (o) => ws.send(JSON.stringify(o));
+// What is said before the socket opens waits for it: the sender below can fail that early, and send() would throw.
+const unsent = [];
+const opened = new Promise((r) => (ws.onopen = () => { for (const s of unsent.splice(0)) ws.send(s); r(); }));
+const say = (o) => { const s = JSON.stringify(o); if (ws.readyState === WebSocket.OPEN) ws.send(s); else unsent.push(s); };
+// Pixels leave through a worker with a socket of its own (runtime/sender.js), in buffers it hands back once sent. This socket carries the rest.
+const sender = new Worker("/runtime/sender.js", { type: "module" });
+const spare = [];
+sender.onmessage = (e) => { if (e.data instanceof ArrayBuffer) spare.push(new Uint8Array(e.data)); else say({ t: "error", msg: e.data?.error ?? "frame sender" }); };
+sender.onerror = (e) => say({ t: "error", msg: `frame sender: ${e.message}` });
 addEventListener("error", (e) => say({ t: "error", msg: `${e.message} @${e.filename}:${e.lineno}${e.error?.stack ? ` | ${e.error.stack}` : ""}` }));
 addEventListener("unhandledrejection", (e) => say({ t: "error", msg: String(e.reason?.stack ?? e.reason) }));
 // Network block: a refused request is reported, and the server fails the render and names the URL. Chrome's CSP refusals
@@ -42,7 +50,7 @@ const next = async () => { while (!rx.length) await new Promise((r) => (wake = r
 // Violation events are queued as tasks. A few turns let them land before the server is told the plan or the draw is done.
 const settle = async () => { for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0)); };
 
-await new Promise((r) => (ws.onopen = r));
+await opened;
 say({ t: "hello" });
 const job = await next();
 // Dead keys: each score line's kv is wrapped, so the plan can name the keys no program reads in any frame.
@@ -162,22 +170,24 @@ const need = await next();
 let drawMs = 0, readMs = 0, sendMs = 0, waitMs = 0, inflight = 0; const loop0 = realNow(); const WINDOW = job.window ?? 6;
 const mc = new MessageChannel(); let mcWake = null; mc.port1.onmessage = () => { mcWake?.(); mcWake = null; };
 const yieldTask = () => new Promise((r) => { mcWake = r; mc.port2.postMessage(0); });
-const emit = async (px, a0) => { ws.send(px); const s0 = realNow(); sendMs += s0 - a0; if (++inflight >= WINDOW) { const ack = await next(); if (ack.t !== "ack") throw new Error("protocol"); inflight--; waitMs += realNow() - s0; } };
+// Each frame is read into a buffer of its own, which moves to the sender and comes back once sent.
+const frameBuf = () => spare.pop() ?? new Uint8Array(comp.pack.length);
+const emit = async (px, a0) => { sender.postMessage(px.buffer, [px.buffer]); const s0 = realNow(); sendMs += s0 - a0; if (++inflight >= WINDOW) { const ack = await next(); if (ack.t !== "ack") throw new Error("protocol"); inflight--; waitMs += realNow() - s0; } };
 const ring = []; const RING = job.ring ?? 0;
 for (const c of need.chunks) {
   for (const f of c.frames) {
     const a = realNow(); const dl = film.frame(f); await comp.preload(dl); comp.frame(dl); const b = realNow();
     if (RING) {
       ring.push(comp.startRead()); readMs += realNow() - b; drawMs += b - a;
-      if (ring.length > RING) { const r0 = realNow(); const px = await comp.finishRead(ring.shift(), yieldTask); const r1 = realNow(); readMs += r1 - r0; await emit(px, r1); }
+      if (ring.length > RING) { const r0 = realNow(); const px = await comp.finishRead(ring.shift(), yieldTask, frameBuf()); const r1 = realNow(); readMs += r1 - r0; await emit(px, r1); }
     } else {
-      const px = comp.readYUV(); const d = realNow(); drawMs += b - a; readMs += d - b;
+      const px = comp.readYUV(frameBuf()); const d = realNow(); drawMs += b - a; readMs += d - b;
       // A window of frames in flight, so readback, transport and encoding overlap instead of running in lockstep.
       await emit(px, d);
     }
   }
 }
-while (ring.length) { const px = await comp.finishRead(ring.shift(), yieldTask); await emit(px, realNow()); }
+while (ring.length) { const px = await comp.finishRead(ring.shift(), yieldTask, frameBuf()); await emit(px, realNow()); }
 while (inflight > 0) { await next(); inflight--; }
 await settle();
 say({ t: "done", drawMs, readMs, sendMs, waitMs, loopMs: realNow() - loop0, drawCalls: comp.drawCalls, bakes: comp.bakes });

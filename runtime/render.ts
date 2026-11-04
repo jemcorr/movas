@@ -71,8 +71,9 @@ const bounds = [...boundaries].sort((a, b) => a - b);
 
 // ---------- static server ----------
 const MIME: Record<string, string> = { html: "text/html", js: "text/javascript", json: "application/json", woff2: "font/woff2", glb: "model/gltf-binary", png: "image/png", jpg: "image/jpeg", wasm: "application/wasm" };
-let onSocket: ((s: WebSocket) => void) | null = null;
-const early: { ws: WebSocket; msgs: MessageEvent[] }[] = [];
+// Two sockets: /pipe carries the protocol, /frames the pixels, from the page's sender worker.
+const sockets: Record<string, ((s: WebSocket) => void) | null> = { "/pipe": null, "/frames": null };
+const early: { path: string; ws: WebSocket; msgs: MessageEvent[] }[] = [];
 // Network block, the page side: the page may load only from its own origin and talk on its own websocket.
 const CSP = "default-src 'self' 'unsafe-inline' 'unsafe-eval' blob: data:; connect-src 'self' ws://127.0.0.1:*";
 // A program URL resolves to the film's own programs first, then to the tool's. The film's programs are always the root's: a temp copy of the score has no programs.
@@ -80,17 +81,19 @@ const programFile = (p: string) => { const own = `${ROOT}/film${p}`; try { Deno.
 const files = (p: string) => p.startsWith("/frames/") ? `${WORK}${p}` : p.startsWith("/runtime/") ? `${HERE}${p}` : p.startsWith("/programs/") ? programFile(p) : p.startsWith("/fonts/") || p.startsWith("/assets/") ? `${RT}${PUBLIC}${p.replace("/assets", "")}` : p.startsWith("/three/") ? (THREE ? `${RT}${THREE}${p.slice(6)}` : null) : null;
 const server = Deno.serve({ port: PORT, hostname: "127.0.0.1", onListen() {} }, async (req) => {
   const u = new URL(req.url);
-  if (u.pathname === "/pipe") {
+  if (u.pathname in sockets) {
     const { socket, response } = Deno.upgradeWebSocket(req, { idleTimeout: 0 });
-    if (onSocket) onSocket(socket);
-    else { const e = { ws: socket, msgs: [] as MessageEvent[] }; socket.binaryType = "arraybuffer"; socket.onmessage = (m) => e.msgs.push(m); early.push(e); }
+    const handler = sockets[u.pathname];
+    if (handler) handler(socket);
+    else { const e = { path: u.pathname, ws: socket, msgs: [] as MessageEvent[] }; socket.binaryType = "arraybuffer"; socket.onmessage = (m) => e.msgs.push(m); early.push(e); }
     return response;
   }
   if (u.pathname === "/") return new Response(await Deno.readFile(`${HERE}/runtime/page.html`), { headers: { "content-type": "text/html", "content-security-policy": CSP } });
   const f = files(decodeURIComponent(u.pathname));
   if (!f && u.pathname.startsWith("/three/")) console.error("MOVAS_THREE is not set. Add MOVAS_THREE=<the three package folder> to .movasrc: a program imports three.");
   if (!f) return new Response("no", { status: 404 });
-  try { return new Response(await Deno.readFile(f), { headers: { "content-type": MIME[f.split(".").pop()!] ?? "application/octet-stream", "cache-control": "no-store" } }); } catch { return new Response("missing", { status: 404 }); }
+  // The policy goes on every file too: a worker script runs under its own response's policy, not the page's.
+  try { return new Response(await Deno.readFile(f), { headers: { "content-type": MIME[f.split(".").pop()!] ?? "application/octet-stream", "cache-control": "no-store", "content-security-policy": CSP } }); } catch { return new Response("missing", { status: 404 }); }
 });
 
 // ---------- shell ----------
@@ -184,39 +187,46 @@ let plan: any = null, report: any = {};
 const blocked: string[] = [], renames: [string, string][] = []; // Chunks land in the cache only after the run is known to be clean.
 lap("keys");
 const result = await new Promise<any>((resolve, reject) => {
-  onSocket = (ws) => {
-    ws.binaryType = "arraybuffer";
-    let chunks: { id: string; frames: number[]; path: string }[] = [], ci = 0, fi = 0;
-    let cur: { child: Deno.ChildProcess; writer: WritableStreamDefaultWriter<Uint8Array>; tmp: string; path: string } | null = null;
-    const running: Promise<void>[] = []; let frameCount = 0; const pixHashes: string[] = [];
-    const open = async () => {
-      while (running.length >= maxEnc) await Promise.race(running);
-      const c = chunks[ci], tmp = `${c.path}.tmp.mp4`, child = encoder(tmp), writer = child.stdin.getWriter();
-      cur = { child, writer, tmp, path: c.path };
-    };
-    const close = () => {
-      const k = cur!; cur = null;
-      const p: Promise<void> = (async () => {
-        await k.writer.close();
-        const st = await k.child.output(); if (!st.success) throw new Error(new TextDecoder().decode(st.stderr));
-        renames.push([k.tmp, k.path]);
-      })().finally(() => { running.splice(running.indexOf(p), 1); });
-      running.push(p);
-    };
-    let chain: Promise<void> = Promise.resolve();
+  let ctl: WebSocket | null = null; // the protocol socket: acks go back on it
+  let chunks: { id: string; frames: number[]; path: string }[] = [], ci = 0, fi = 0;
+  let cur: { child: Deno.ChildProcess; writer: WritableStreamDefaultWriter<Uint8Array>; tmp: string; path: string } | null = null;
+  const running: Promise<void>[] = []; let frameCount = 0; const pixHashes: string[] = [];
+  const open = async () => {
+    while (running.length >= maxEnc) await Promise.race(running);
+    const c = chunks[ci], tmp = `${c.path}.tmp.mp4`, child = encoder(tmp), writer = child.stdin.getWriter();
+    cur = { child, writer, tmp, path: c.path };
+  };
+  const close = () => {
+    const k = cur!; cur = null;
+    const p: Promise<void> = (async () => {
+      await k.writer.close();
+      const st = await k.child.output(); if (!st.success) throw new Error(new TextDecoder().decode(st.stderr));
+      renames.push([k.tmp, k.path]);
+    })().finally(() => { running.splice(running.indexOf(p), 1); });
+    running.push(p);
+  };
+  let chain: Promise<void> = Promise.resolve();
+  // One frame's pixels, in the order the page drew them: into the open chunk's encoder, then an ack on the protocol socket.
+  const onFrame = (buf: Uint8Array<ArrayBuffer>) => {
+    chain = chain.then(async () => {
+      if (!cur) await open();
+      if ("pixhash" in args) pixHashes.push((await sha(buf)).slice(0, 16));
+      if (ASYNCFEED) { while (inq.length >= FEEDQ) await inq.shift(); const wp = cur!.writer.write(buf); wp.catch(reject); inq.push(wp); } else await cur!.writer.write(buf);
+      frameCount++;
+      fi++; if (fi >= chunks[ci].frames.length) { close(); fi = 0; ci++; }
+      ctl!.send('{"t":"ack"}');
+    }).catch(reject);
+  };
+  sockets["/frames"] = (fs) => {
+    fs.binaryType = "arraybuffer";
+    fs.onmessage = (e) => { if (typeof e.data === "string") reject(new Error("protocol: text on the frame socket")); else onFrame(new Uint8Array(e.data)); };
+    // Frames stop if this socket goes; without this the render would wait for the page until the timeout. After a finished render it is a no-op.
+    fs.onclose = () => reject(new Error("the frame socket closed"));
+  };
+  sockets["/pipe"] = (ws) => {
+    ctl = ws; ws.binaryType = "arraybuffer";
     ws.onmessage = (e) => {
-      if (typeof e.data !== "string") {
-        const buf = new Uint8Array(e.data);
-        chain = chain.then(async () => {
-          if (!cur) await open();
-          if ("pixhash" in args) pixHashes.push((await sha(buf)).slice(0, 16));
-          if (ASYNCFEED) { while (inq.length >= FEEDQ) await inq.shift(); const wp = cur!.writer.write(buf); wp.catch(reject); inq.push(wp); } else await cur!.writer.write(buf);
-          frameCount++;
-          fi++; if (fi >= chunks[ci].frames.length) { close(); fi = 0; ci++; }
-          ws.send('{"t":"ack"}');
-        }).catch(reject);
-        return;
-      }
+      if (typeof e.data !== "string") { reject(new Error("protocol: pixels on the protocol socket")); return; }
       const m = JSON.parse(e.data);
       if (m.t === "hello") {
         lap("hello");
@@ -261,7 +271,7 @@ const result = await new Promise<any>((resolve, reject) => {
     };
   };
   // A fast shell can reach /pipe before this handler exists (15 ms against about 200 ms of file hashing). Those sockets wait in `early`, with their messages kept.
-  for (const e of early.splice(0)) { onSocket(e.ws); for (const m of e.msgs) e.ws.onmessage?.(m); }
+  for (const e of early.splice(0)) { sockets[e.path]!(e.ws); for (const m of e.msgs) e.ws.onmessage?.(m); }
 }).catch((e) => { console.error(String(e?.stack ?? e)); finish(4); throw e; });
 clearTimeout(failTimer);
 try { shell.kill("SIGKILL"); } catch { /* gone */ }
