@@ -22,6 +22,8 @@ const PORT = parseInt(args.port ?? "3517"), DBG = parseInt(args.dbg ?? "9334");
 const filmDir = args.film ? (args.film.startsWith("/") ? args.film : `${Deno.cwd()}/${args.film}`) : `${ROOT}/film`;
 const preview = "preview" in args, scale = parseFloat(args.scale ?? (preview ? "0.5" : "1"));
 const preset = args.preset ?? (preview ? "veryfast" : "medium"), crf = args.crf ?? (preview ? "24" : "16"), threads = args.threads ?? "3", maxEnc = parseInt(args.encoders ?? "6");
+// --feed=async (default; --feed=sync for the old path): queue each frame on its chunk's ffmpeg stdin and ack at once, with at most --feedq frames (default 60, ~187 MB at 1080x1920) not yet written.
+const ASYNCFEED = (args.feed ?? "async") === "async", FEEDQ = parseInt(args.feedq ?? "60"), inq: Promise<void>[] = [];
 const CHUNK = parseInt(args.chunk ?? "30"), outPath = args.out ?? `${WORK}/out/${preview ? "preview" : "master"}.mp4`;
 const t = { start: performance.now() } as Record<string, number>;
 const lap = (k: string) => { t[k] = performance.now() - t.start; };
@@ -208,7 +210,8 @@ const result = await new Promise<any>((resolve, reject) => {
         chain = chain.then(async () => {
           if (!cur) await open();
           if ("pixhash" in args) pixHashes.push((await sha(buf)).slice(0, 16));
-          await cur!.writer.write(buf); frameCount++;
+          if (ASYNCFEED) { while (inq.length >= FEEDQ) await inq.shift(); const wp = cur!.writer.write(buf); wp.catch(reject); inq.push(wp); } else await cur!.writer.write(buf);
+          frameCount++;
           fi++; if (fi >= chunks[ci].frames.length) { close(); fi = 0; ci++; }
           ws.send('{"t":"ack"}');
         }).catch(reject);
@@ -249,7 +252,7 @@ const result = await new Promise<any>((resolve, reject) => {
         })().catch(reject);
       } else if (m.t === "done") {
         chain.then(async () => {
-          await Promise.all(running);
+          await Promise.all(inq); await Promise.all(running);
           if (blocked.length) { for (const [t] of renames) await Deno.remove(t).catch(() => {}); throw new Error(`render stopped, network blocked: ${blocked.join("; ")}`); }
           for (const [t, p] of renames) await Deno.rename(t, p);
           lap("frames"); report.draw = m; report.pixHashes = pixHashes; resolve(report);
