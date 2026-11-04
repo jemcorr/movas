@@ -168,13 +168,23 @@ export class Compositor {
     c.width = Math.ceil((w + pad * 2) * k); c.height = Math.ceil((asc + desc + pad * 2) * k);
     this.setCtx(x, o); x.setTransform(k, 0, 0, k, 0, 0);
     let cx = pad; parts.forEach((p, i) => { x.fillStyle = p.color; x.fillText(p.text, cx, pad + asc); cx += widths[i]; });
-    const t = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, t); gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true); gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, c); gl.generateMipmap(gl.TEXTURE_2D);
+    const t = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, t);
+    this.upload(c); gl.generateMipmap(gl.TEXTURE_2D);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     e = { t, w, asc, pad, tw: c.width / k, th: c.height / k, shadows: new Map() };
     this.textCache.set(key, e); this.bakes++;
     return e;
+  }
+  /** Uploads a canvas or a decoded image into the bound texture. Programs share this GL context and leave its global unpack
+   *  state as they like (the wall's atlas upload leaves FLIP_Y on), so every upload sets each value it depends on. An upload
+   *  that inherited the wall's FLIP_Y drew S3's avatar upside down, but only in renders whose first frames had no text bake
+   *  before it, so a note render cached frames a full render never draws. ImageBitmaps ignore these three values. */
+  upload(c) {
+    const gl = this.gl;
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false); gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
+    gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, c);
   }
   bakeShadow(o, e, blur) {
     let s = e.shadows.get(blur); if (s) return s;
@@ -182,8 +192,8 @@ export class Compositor {
     c.width = Math.ceil(e.w + pad * 2); c.height = Math.ceil(e.th + pad * 2 - e.pad * 2);
     this.setCtx(x, o); x.filter = `blur(${blur / 2}px)`; x.fillStyle = "#000";
     x.fillText(o.text, pad, pad + e.asc);
-    const t = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, t); gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, c);
+    const t = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, t);
+    this.upload(c);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     s = { t, pad, tw: c.width, th: c.height }; e.shadows.set(blur, s); return s;
@@ -390,7 +400,7 @@ export class Compositor {
     let t = this.images.get(key); if (t) return t;
     const gl = this.gl, c = o.src ? this.decoded.get(o.src) : (o.bake ?? this.bakers?.[o.key])(); t = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, t);
     if (o.src) { this.decoded.delete(o.src); this.urlOrder = this.urlOrder ?? []; this.urlOrder.push(o.src); if (this.urlOrder.length > 48) { const old = this.urlOrder.shift(); gl.deleteTexture(this.images.get(old)); this.images.delete(old); } }
-    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, c); gl.generateMipmap(gl.TEXTURE_2D);
+    this.upload(c); gl.generateMipmap(gl.TEXTURE_2D);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     this.images.set(key, t); return t;
   }
