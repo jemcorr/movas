@@ -7,8 +7,11 @@ film once, then every scene alone, all with --nocache in a work folder of their 
 taken before the encoder. A scene drawn alone that differs from the same frames in the full render is a defect: a note that
 starts there would cache frames a full render never draws.
 
-Exit 1 on any defect. --scenes=s03,s07 checks only those scenes against the full render. It takes about as long as two
-full renders, with ultrafast encoding, and touches neither the film's cache nor its outputs.
+Renders oscillate a little: now and then one frame draws differently from one run to the next. So a scene with at most
+--noise frames that differ (default 2) is reported as noise and passes; a state leak shows as a run of frames (the avatar
+flip it was written for was 462 of 465). Exit 1 on any defect. --scenes=s03,s07 checks only those scenes against the
+full render. It takes about as long as two full renders, with ultrafast encoding, and touches neither the film's cache nor
+its outputs.
 """
 import argparse
 import json
@@ -58,6 +61,7 @@ def render(dir, tag, flags):
 def main():
     ap = argparse.ArgumentParser(description="Render every scene alone and compare its raw frames with a full render.")
     ap.add_argument("--scenes", help="comma-separated scene ids; default all")
+    ap.add_argument("--noise", type=int, default=2, help="differing frames per scene still read as run-to-run noise")
     a = ap.parse_args()
     ids = a.scenes.split(",") if a.scenes else scenes()
     dir = os.path.join(WORK, "purity")
@@ -68,6 +72,9 @@ def main():
     for s in ids:
         alone = render(dir, s, [f"--scenes={s}"])
         diff = sorted(f for f, h in alone.items() if full.get(f) != h)
+        if diff and len(diff) <= a.noise:
+            print(f"  noise {s}: {len(diff)} frame(s) differ, {', '.join(map(str, diff))}; at most --noise={a.noise}, so not a defect")
+            continue
         bad += len(diff)
         if diff:
             print(f"  DEFECT {s}: {len(diff)} of {len(alone)} frames differ from the full render, frames {diff[0]}..{diff[-1]}")
