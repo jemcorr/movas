@@ -176,7 +176,7 @@ const finish = (code = 0) => { try { shell.kill("SIGKILL"); } catch { /* gone */
 const failTimer = setTimeout(() => { console.error("page did not answer"); finish(3); }, parseInt(args.timeout ?? "600") * 1000);
 
 const encoder = (out: string) => {
-  const c = new Deno.Command("ffmpeg", { args: ["-v", "error", "-nostdin", "-y", "-f", "rawvideo", "-pix_fmt", "yuv420p", "-s", `${tw}x${th}`, "-r", String(film.fps), "-i", "-", "-vf", "setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv", ...(preset === "vt" ? ["-c:v", "h264_videotoolbox", "-q:v", crf, "-allow_sw", "0", "-g", String(CHUNK), "-profile:v", "high"] : ["-c:v", "libx264", "-preset", preset, "-crf", crf, "-g", String(CHUNK), "-keyint_min", String(CHUNK), "-sc_threshold", "0", "-threads", threads]), "-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709", "-color_range", "tv", "-an", out], stdin: "piped", stdout: "null", stderr: "piped" }).spawn();
+  const c = new Deno.Command("ffmpeg", { args: ["-v", "error", "-nostdin", "-y", "-f", "rawvideo", "-pix_fmt", "yuv420p", "-s", `${tw}x${th}`, "-r", String(film.fps), "-i", "-", "-vf", "setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv", ...(preset === "vt" ? ["-c:v", "h264_videotoolbox", "-q:v", crf, "-allow_sw", "0", "-g", String(CHUNK), "-profile:v", "high", "-bsf:v", "filter_units=remove_types=6"] : ["-c:v", "libx264", "-preset", preset, "-crf", crf, "-g", String(CHUNK), "-keyint_min", String(CHUNK), "-sc_threshold", "0", "-threads", threads]), "-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709", "-color_range", "tv", "-an", out], stdin: "piped", stdout: "null", stderr: "piped" }).spawn();
   return c;
 };
 
