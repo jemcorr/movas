@@ -1,0 +1,9 @@
+scene s02 "Two chats"
+panel P title=Bia
+panel Q title=Caio
+msg p1 in=P side=in @start+0.5s "Is the invoice still open?"
+msg p2 in=P side=out @p1+1.5s "It is. Do you want the link?"
+msg q1 in=Q side=in @p2+1.5s "Can I pay it in two parts?"
+msg q2 in=Q side=out @q1+1.5s "It is. Do you want the link?"
+tag label on=P @q2+1s "Bia, done"
+end @label+2s

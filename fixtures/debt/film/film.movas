@@ -1,0 +1,7 @@
+film reminder fps=24
+format main 1280x720 default
+grid seconds
+bus sfx gain=1
+sfxcap 6s
+music bed file=audio/tone.wav gain=0.5 fadein=0.2 fadeout=0.5
+order s01 s02 s03

@@ -1,0 +1,20 @@
+# Chat format: a phone chat. A film opts in with `use chat` in film/meaning.txt. The pack brings the verbs msg and chat, the drawing in programs/formats/chat.js, and these rules.
+# A line's role is what its side means. A film with another side declares it in film/meaning.txt: fact role side=<name> sent
+verb msg needs=in,side
+verb chat words=q,a time=reply ref=chat
+fact role side=in received
+fact role side=out sent
+
+# Director's ruling: a sent bubble is green, on the right. Who speaks must not rely on bubble colour, so these rules never tell two sent speakers apart.
+rule sent.side where verb=msg role=sent expect drawn.align=right say="A sent message sits on the right"
+rule sent.fill where verb=msg role=sent expect drawn.family=green say="A sent message is green"
+rule recv.side where verb=msg role=received expect drawn.align=left say="A received message sits on the left"
+rule recv.fill where verb=msg role=received expect drawn.family=white say="A received message is white"
+alike chat.sides verb=msg role=sent vs verb=msg role=received say="A viewer cannot tell sent from received by the bubble" note="set on one film"
+
+# The same reply repeated in one panel reads as one customer asking everything. Three words or more, so a repeated "Sim" does not count.
+rule chat.repeat where verb=msg role=sent words>=3 forbid verb=msg role=sent same=panel,text before=at say="The same reply repeats in one panel, so it reads as one conversation"
+
+# Director's ruling: a line scrolling under a chat header is not clipping.
+exempt craft.clip where verb=msg say="A line scrolling under a chat header is not clipping"
+exempt craft.clip where panel~/./ drawn.inPanel=true say="A line inside a chat panel scrolls with it"

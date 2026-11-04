@@ -1,0 +1,6 @@
+film chatcheck fps=30
+format main 1080x1920 default
+grid seconds
+bus sfx gain=1
+sfxcap 6s
+order s01 s02

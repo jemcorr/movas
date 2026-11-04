@@ -1,0 +1,6 @@
+rule read.punch per_word=0.17 base=0.85 owner=fixture why="reading time for a headline"
+rule read.dock per_word=0.17 base=1.7 owner=fixture why="reading time for a caption"
+rule min.text px=30 owner=fixture type=defect why="legible on a phone"
+rule voice.helper words=Claro,notified scope=verb:msg,in:conv,side:out say="the helper may not say" owner=fixture why="a scoped word ban in the film's own rules"
+style punch in=7f snap=0.25b
+style dock line=8f stagger=3f dock=10f

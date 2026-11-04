@@ -1,0 +1,17 @@
+#!/bin/bash
+# The one command an agent needs. The tool is this file's folder. The film is the folder MOVAS_FILM names, or the current folder:
+# its score in film/ and its settings in .movasrc.
+HERE="$(cd "$(dirname "$0")" && pwd)"
+FILM="${MOVAS_FILM:-$PWD}"; FILM="$(cd "$FILM" && pwd)"
+# MOVAS_WORK and MOVAS_PORT come from the film's .movasrc when it sets them. For the machine paths, a value already in the environment wins, so a test can point one run elsewhere.
+keep_public="${MOVAS_PUBLIC:-}"; keep_shell="${MOVAS_SHELL:-}"; keep_three="${MOVAS_THREE:-}"; keep_checks="${MOVAS_CHECKS:-}"
+[ -f "$FILM/.movasrc" ] && . "$FILM/.movasrc"
+MOVAS_PUBLIC="${keep_public:-${MOVAS_PUBLIC:-}}"; MOVAS_SHELL="${keep_shell:-${MOVAS_SHELL:-}}"; MOVAS_THREE="${keep_three:-${MOVAS_THREE:-}}"; MOVAS_CHECKS="${keep_checks:-${MOVAS_CHECKS:-}}"
+MOVAS_WORK="${MOVAS_WORK:-$FILM/.work}"
+MOVAS_FILM="$FILM"; MOVAS_HOME="$HERE"
+export MOVAS_FILM MOVAS_HOME MOVAS_WORK MOVAS_PORT MOVAS_PUBLIC MOVAS_SHELL MOVAS_THREE MOVAS_CHECKS
+[ "${1:-}" = test-ops ] && { shift; [ -f "$FILM/film/tools/test_ops.ts" ] || { echo "This film has no test-ops."; exit 2; }; exec deno run -A "$FILM/film/tools/test_ops.ts" "$@"; }
+[ "${1:-}" = test-rules ] && { shift; [ -d "$HERE/fixtures" ] || { echo "This tool has no fixtures, so it has no test-rules."; exit 2; }; exec deno run -A "$HERE/tool/test_rules.ts" "$@"; }
+[ "${1:-}" = leak ] && { shift; exec python3 -B "$HERE/tool/leak_test.py" "$@"; }
+[ "${1:-}" = verify ] && { shift; exec python3 -B "$HERE/tool/verify.py" "$@"; }
+exec deno run --no-prompt --allow-read --allow-write="$FILM" --allow-write="$MOVAS_WORK" --allow-run --allow-env --allow-net=127.0.0.1 "$HERE/tool/cli.ts" "$@"

@@ -1,0 +1,5 @@
+scene s03 "Plan"
+punch q @start+0.5s step=0.5s size=96 top=200 sfx=ui/drop_004:.5 "Pay in / *three parts.*"
+text calm @q.out "A reminder, not a threat."
+credits k1 @calm+1.5s title="A test film" by="The movas fixtures" license="CC0"
+end @k1.floor+1s

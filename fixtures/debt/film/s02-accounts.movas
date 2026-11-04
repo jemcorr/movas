@@ -1,0 +1,8 @@
+scene s02 "Accounts"
+tag statusA on=A @start+0.5s flip="Paid" sfx=ui/drop_002:.5 "Overdue"
+tag statusB on=B @statusA+0.5s "Overdue"
+text noteA on=A @statusB+0.5s "Marina owes R$ 340"
+text noteB on=B @noteA+0.5s "Rui still owes R$ 90"
+text payA on=A @noteB+1s sfx=ui/drop_003:.5 "Payment received today"
+cue flipA @payA+1s
+end @flipA+3s

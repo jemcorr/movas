@@ -1,0 +1,3 @@
+# Rules of this film. It uses no chat, so it has no `use chat` line.
+use debt-reminder
+limit alike.delta 18 note="kept at the tool's default"

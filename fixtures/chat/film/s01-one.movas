@@ -1,0 +1,9 @@
+scene s01 "One chat"
+panel conv title=Ana keep=6 x=80 y=500 w=920 h=700
+msg a in=conv side=in @start+0.5s "Is the invoice still open?"
+msg b in=conv side=out @a+1.5s "It is. Do you want the link?"
+msg c in=conv side=in @b+1.5s "Yes, send it please."
+msg d in=conv side=out @c+1.5s "Here it is, and thank you."
+msg e in=conv side=in @d+1.5s "Claro, got it."
+msg g in=conv side=out @e+1.5s "Good. Anything else today?"
+end @g+2s

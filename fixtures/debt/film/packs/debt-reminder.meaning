@@ -1,0 +1,4 @@
+# Product truth for a debt reminder. A label's words change over time, so these rules read the label at a moment, in its own account.
+rule paid.received where verb=tag drawn.text~/^paid$/i need verb=text text~/payment received/i same=panel before=first say="An account reads Paid before its own payment line"
+rule paid.owes where verb=tag drawn.text~/^paid$/i forbid verb=text text~/still owes/i same=panel before=last say="An account reads Paid while its own card says the person still owes"
+rule overdue.amount where verb=tag drawn.text~/^overdue$/i need verb=text text~/R\$/ same=panel say="An Overdue label needs the amount on its own card"

@@ -1,0 +1,5 @@
+# The headless shell and three.js are copied in by hand (see README), so they stay out of version control, with every scratch folder.
+vendor/
+.work/
+__pycache__/
+.DS_Store

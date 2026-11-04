@@ -1,0 +1,4 @@
+scene s01 "Notice"
+punch p @start+0.5s step=0.5s size=96 top=200 sfx=ui/drop_001:.5 "You still owe / *R$ 340.*"
+text due @p.out "Twelve days past the date."
+end @due+3s
