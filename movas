@@ -14,4 +14,5 @@ export MOVAS_FILM MOVAS_HOME MOVAS_WORK MOVAS_PORT MOVAS_PUBLIC MOVAS_SHELL MOVA
 [ "${1:-}" = test-rules ] && { shift; [ -d "$HERE/fixtures" ] || { echo "This tool has no fixtures, so it has no test-rules."; exit 2; }; exec deno run -A "$HERE/tool/test_rules.ts" "$@"; }
 [ "${1:-}" = leak ] && { shift; exec python3 -B "$HERE/tool/leak_test.py" "$@"; }
 [ "${1:-}" = verify ] && { shift; exec python3 -B "$HERE/tool/verify.py" "$@"; }
+[ "${1:-}" = purity ] && { shift; exec python3 -B "$HERE/tool/purity.py" "$@"; }
 exec deno run --no-prompt --allow-read --allow-write="$FILM" --allow-write="$MOVAS_WORK" --allow-run --allow-env --allow-net=127.0.0.1 "$HERE/tool/cli.ts" "$@"
