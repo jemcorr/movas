@@ -4,6 +4,7 @@
 //   deno run --allow-net=127.0.0.1 --allow-read --allow-write=<work> --allow-run=ffmpeg,ffprobe,<shell> --allow-env runtime/render.ts ...
 import { compilerKeys, hashTree, loadFilm, solve } from "../tool/movas.ts";
 import { HashCache, unreadKeys } from "../tool/ops.ts";
+import { joinChunks } from "./concat.ts";
 import { mix } from "./mix.ts";
 
 const args = Object.fromEntries(Deno.args.filter((a) => a.startsWith("--")).map((a) => { const m = /^--([^=]+)(?:=(.*))?$/.exec(a)!; return [m[1], m[2] ?? "1"]; }));
@@ -270,12 +271,23 @@ if (!("noaudio" in args) && !args.scenes && !args.range) {
 lap("audio");
 
 // ---------- concat ----------
-const list = `${WORK}/concat.txt`;
-await Deno.writeTextFile(list, report.all.map((c: any) => `file '${c.path}'`).join("\n") + "\n");
 await Deno.mkdir(outPath.replace(/\/[^/]*$/, ""), { recursive: true });
-const inputs = ["-f", "concat", "-safe", "0", "-i", list]; const hasAudio = !("noaudio" in args) && !args.scenes && !args.range;
-const c = await new Deno.Command("ffmpeg", { args: ["-v", "error", "-nostdin", "-y", ...inputs, ...(hasAudio ? ["-i", audioOut] : []), "-c", "copy", "-movflags", "+faststart", "-metadata", `comment=movas:${versionId}`, outPath], stderr: "piped" }).output();
+// The chunks join in this process: concat.ts writes the packets the concat demuxer would, which costs that demuxer about 10 ms a file
+// (it decodes a frame to probe each one). One ffmpeg call then muxes the audio and moves the index to the front, as before.
+// Any chunk the joiner does not expect falls back to the demuxer.
+const joinedPath = `${WORK}/joined.mp4`;
+let inputs: string[], outOpts: string[] = [];
+try { const j = await joinChunks(report.all.map((c: any) => c.path), joinedPath); inputs = ["-i", joinedPath]; outOpts = ["-b:v", String(j.firstBitRate)]; }
+catch (e) {
+  console.error(`note concat.fallback ${(e as Error).message}`);
+  const list = `${WORK}/concat.txt`;
+  await Deno.writeTextFile(list, report.all.map((c: any) => `file '${c.path}'`).join("\n") + "\n");
+  inputs = ["-f", "concat", "-safe", "0", "-i", list];
+}
+const hasAudio = !("noaudio" in args) && !args.scenes && !args.range;
+const c = await new Deno.Command("ffmpeg", { args: ["-v", "error", "-nostdin", "-y", ...inputs, ...(hasAudio ? ["-i", audioOut] : []), "-c", "copy", ...outOpts, "-movflags", "+faststart", "-metadata", `comment=movas:${versionId}`, outPath], stderr: "piped" }).output();
 if (!c.success) throw new Error(new TextDecoder().decode(c.stderr));
+if (outOpts.length) Deno.remove(joinedPath).catch(() => {});
 lap("concat");
 const stat = await Deno.stat(outPath);
 // Read the output back. A render that reports success must have written what it was asked to write.
