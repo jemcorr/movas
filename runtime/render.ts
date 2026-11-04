@@ -5,7 +5,6 @@
 import { compilerKeys, hashTree, loadFilm, solve } from "../tool/movas.ts";
 import { HashCache, unreadKeys } from "../tool/ops.ts";
 import { joinChunks } from "./concat.ts";
-import { mix } from "./mix.ts";
 
 const args = Object.fromEntries(Deno.args.filter((a) => a.startsWith("--")).map((a) => { const m = /^--([^=]+)(?:=(.*))?$/.exec(a)!; return [m[1], m[2] ?? "1"]; }));
 if ("like-master" in args) { console.error("--like-master is gone: the bed starts on its score cue, with no extra delay. Remove the flag."); Deno.exit(2); }
@@ -99,6 +98,38 @@ const shell = new Deno.Command(SHELL, { args: [`--remote-debugging-port=${DBG}`,
 
 // ---------- source hash: anything that can change pixels without changing a list ----------
 const sha = async (b: BufferSource) => [...new Uint8Array(await crypto.subtle.digest("SHA-256", b))].map((x) => x.toString(16).padStart(2, "0")).join("");
+
+// ---------- audio, started here ----------
+// The mix is a pure function of the sound rows, the clip files and these options. The same inputs reuse the same file, so a note that moves no sound does not mix again.
+// A miss mixes in a worker thread, started once the page has its job: it runs beside the page's plan, after the shell's start-up
+// and before the encoders need the cores. Only the mux waits for it.
+const hasAudio = !("noaudio" in args) && !args.scenes && !args.range && !stills && !("planOnly" in args);
+const audioOut = `${WORK}/audio.m4a`;
+const startAudio = async () => {
+  if (!hasAudio) return { ms: 0, hit: false, samples: 0 };
+  const a0 = performance.now();
+  const f32 = `${WORK}/mix.f32`;
+  const mixOpts = { root: PUBLIC, cache: `${WORK}/clips`, music: film.music, sfxGain: parseFloat(args.sfxgain ?? String(film.sfxGain)), duckFloor: film.duck?.gain ?? 0.6, release: 8, capFrames: 90, bedDelay: parseFloat(args.beddelay ?? "0") };
+  const sized = await Promise.all([...new Set([...solved.sfx.map((r: any) => r.file), film.music?.file].filter(Boolean))].sort().map(async (f) => `${f}:${(await Deno.stat(`${PUBLIC}/${f}`)).size}`));
+  const audioKey = (await sha(new TextEncoder().encode(JSON.stringify({ sfx: solved.sfx, ducks: solved.ducks, duckSpans: solved.duckSpans ?? [], clock: solved.clock, trim: solved.trimBeats, n: solved.durationFrames, o: { ...mixOpts, root: "", cache: "" }, preview, sized, mix: await sha(await Deno.readFile(`${HERE}/runtime/mix.ts`)) })))).slice(0, 24);
+  const keptAudio = `${WORK}/audio-cache/${audioKey}.m4a`;
+  const samples = Math.round(solved.durationFrames * (48000 / (solved.clock.fps ?? 30)));
+  try { await Deno.copyFile(keptAudio, audioOut); return { ms: performance.now() - a0, hit: true, samples }; } catch { /* mix below */ }
+  const w = new Worker(new URL("./audio_worker.ts", import.meta.url).href, { type: "module" });
+  try {
+    const r: any = await new Promise((resolve, reject) => {
+      w.onmessage = (e) => resolve(e.data); w.onerror = (e) => { e.preventDefault(); reject(new Error(`audio worker: ${e.message}`)); };
+      w.postMessage({ solved, mixOpts, f32, out: audioOut, bitrate: preview ? "128k" : "320k", samples });
+    });
+    if (!r.ok) throw new Error(r.error);
+  } finally { w.terminate(); }
+  // Into the cache by rename, so a render stopped mid-copy never leaves a short file under a good key.
+  await Deno.mkdir(`${WORK}/audio-cache`, { recursive: true });
+  await Deno.copyFile(audioOut, `${keptAudio}.tmp`); await Deno.rename(`${keptAudio}.tmp`, keptAudio);
+  return { ms: performance.now() - a0, hit: false, samples };
+};
+let audioTask: ReturnType<typeof startAudio> | null = null;
+const audioStart = () => { if (!audioTask) { audioTask = startAudio(); audioTask.catch(() => {}); } }; // awaited before the mux, which reports any failure
 // Lists hash what scene code decides. Only the compositor and GL programs can change pixels without changing a list.
 const hashFiles = async (files: string[]) => { let acc = ""; for (const f of files.sort()) acc += await sha(await Deno.readFile(f)); return (await sha(new TextEncoder().encode(acc))).slice(0, 16); };
 const runtimeKey = await hashFiles([`${HERE}/runtime/reelrt.js`, programFile("/programs/lib.js")]);
@@ -186,7 +217,7 @@ const result = await new Promise<any>((resolve, reject) => {
       const m = JSON.parse(e.data);
       if (m.t === "hello") {
         lap("hello");
-        ws.send(JSON.stringify({ t: "job", solved, format, formatId, scale, segments, salt: 0, checks: !("nochecks" in args) && !stills, programHash, scan: !!args.scanOut, window: parseInt(args.window ?? "12"), ring: parseInt(args.ring ?? "6"), modules: args.modules !== undefined ? args.modules.split(",").filter(Boolean) : autoModules }));
+        ws.send(JSON.stringify({ t: "job", solved, format, formatId, scale, segments, salt: 0, checks: !("nochecks" in args) && !stills, programHash, scan: !!args.scanOut, window: parseInt(args.window ?? "12"), ring: parseInt(args.ring ?? "6"), modules: args.modules !== undefined ? args.modules.split(",").filter(Boolean) : autoModules })); audioStart();
       } else if (m.t === "gl") report.gl = m;
       else if (m.t === "blocked") blocked.push(m.msg);
       else if (m.t === "error") reject(new Error([m.msg, ...new Set(blocked)].join("\n")));
@@ -244,30 +275,10 @@ if (stills) {
 }
 
 // ---------- audio ----------
-const audioOut = `${WORK}/audio.m4a`;
+// audioMs is what the render waits for the mix after the frames; the mix's own time is in the trace as audioTaskMs.
 let audioMs = 0;
-if (!("noaudio" in args) && !args.scenes && !args.range) {
-  const a0 = performance.now();
-  const f32 = `${WORK}/mix.f32`;
-  const mixOpts = { root: PUBLIC, cache: `${WORK}/clips`, music: film.music, sfxGain: parseFloat(args.sfxgain ?? String(film.sfxGain)), duckFloor: film.duck?.gain ?? 0.6, release: 8, capFrames: 90, bedDelay: parseFloat(args.beddelay ?? "0") };
-  // The mix is a pure function of the sound rows, the clip files and these options. The same inputs reuse the same file, so a note that moves no sound does not mix again.
-  const sized = await Promise.all([...new Set([...solved.sfx.map((r: any) => r.file), film.music?.file].filter(Boolean))].sort().map(async (f) => `${f}:${(await Deno.stat(`${PUBLIC}/${f}`)).size}`));
-  const audioKey = (await sha(new TextEncoder().encode(JSON.stringify({ sfx: solved.sfx, ducks: solved.ducks, duckSpans: solved.duckSpans ?? [], clock: solved.clock, trim: solved.trimBeats, n: solved.durationFrames, o: { ...mixOpts, root: "", cache: "" }, preview, sized, mix: await sha(await Deno.readFile(`${HERE}/runtime/mix.ts`)) })))).slice(0, 24);
-  const keptAudio = `${WORK}/audio-cache/${audioKey}.m4a`;
-  const samples = Math.round(solved.durationFrames * (48000 / (solved.clock.fps ?? 30)));
-  let audioHit = false;
-  try { await Deno.copyFile(keptAudio, audioOut); audioHit = true; } catch { /* mix below */ }
-  if (!audioHit) {
-    const { sum, L } = await mix(solved, mixOpts);
-    await Deno.writeFile(f32, new Uint8Array(sum.buffer));
-    const p = await new Deno.Command("ffmpeg", { args: ["-v", "error", "-nostdin", "-y", "-f", "f32le", "-ar", "48000", "-ac", "2", "-i", f32, "-c:a", "aac_at", "-b:a", preview ? "128k" : "320k", audioOut], stderr: "piped" }).output();
-    if (!p.success) throw new Error(new TextDecoder().decode(p.stderr));
-    if (L !== samples) throw new Error(`mix length ${L} is not the expected ${samples}`);
-    await Deno.mkdir(`${WORK}/audio-cache`, { recursive: true });
-    await Deno.copyFile(audioOut, keptAudio);
-  }
-  audioMs = performance.now() - a0; report.samples = samples;
-}
+audioStart(); const audioRes = await (async () => { const a0 = performance.now(); const r = await audioTask!; audioMs = performance.now() - a0; return r; })();
+if (hasAudio) report.samples = audioRes.samples;
 lap("audio");
 
 // ---------- concat ----------
@@ -275,16 +286,17 @@ await Deno.mkdir(outPath.replace(/\/[^/]*$/, ""), { recursive: true });
 // The chunks join in this process: concat.ts writes the packets the concat demuxer would, which costs that demuxer about 10 ms a file
 // (it decodes a frame to probe each one). One ffmpeg call then muxes the audio and moves the index to the front, as before.
 // Any chunk the joiner does not expect falls back to the demuxer.
+const firstLine = async (cmd: string, a: string[]) => new TextDecoder().decode((await new Deno.Command(cmd, { args: a, stdout: "piped", stderr: "null" }).output()).stdout).split("\n")[0].trim();
+const versions = Promise.all([firstLine(SHELL, ["--version"]), firstLine("ffmpeg", ["-version"])]);
 const joinedPath = `${WORK}/joined.mp4`;
-let inputs: string[], outOpts: string[] = [];
-try { const j = await joinChunks(report.all.map((c: any) => c.path), joinedPath); inputs = ["-i", joinedPath]; outOpts = ["-b:v", String(j.firstBitRate)]; }
+let inputs: string[], outOpts: string[] = [], chunkBytes: Uint8Array<ArrayBuffer>[] | null = null;
+try { const j = await joinChunks(report.all.map((c: any) => c.path), joinedPath); inputs = ["-i", joinedPath]; outOpts = ["-b:v", String(j.firstBitRate)]; chunkBytes = j.files; }
 catch (e) {
   console.error(`note concat.fallback ${(e as Error).message}`);
   const list = `${WORK}/concat.txt`;
   await Deno.writeTextFile(list, report.all.map((c: any) => `file '${c.path}'`).join("\n") + "\n");
   inputs = ["-f", "concat", "-safe", "0", "-i", list];
 }
-const hasAudio = !("noaudio" in args) && !args.scenes && !args.range;
 const c = await new Deno.Command("ffmpeg", { args: ["-v", "error", "-nostdin", "-y", ...inputs, ...(hasAudio ? ["-i", audioOut] : []), "-c", "copy", ...outOpts, "-movflags", "+faststart", "-metadata", `comment=movas:${versionId}`, outPath], stderr: "piped" }).output();
 if (!c.success) throw new Error(new TextDecoder().decode(c.stderr));
 if (outOpts.length) Deno.remove(joinedPath).catch(() => {});
@@ -311,7 +323,12 @@ const conform = async () => {
   for (const [k, w] of [["color_primaries", "bt709"], ["color_transfer", "bt709"], ["color_space", "bt709"], ["color_range", "tv"]]) if (v[k] !== w) problems.push(`${k} is ${v[k]}, expected ${w}`);
   return { ok: problems.length === 0, problems, read: { w: v.width, h: v.height, fps, frames: parseInt(v.nb_read_packets), videoSec: vDur, audioSec: a ? parseFloat(a.duration) : null } };
 };
-const conformance = await conform();
+// The read-back, the output's hash and the chunk hashes run at once: each reads its own file.
+const [conformance, outSha, chunkShas, [shellVersion, ffmpegVersion]] = await Promise.all([
+  conform(), (async () => sha(await Deno.readFile(outPath)))(),
+  Promise.all(report.all.map(async (c: any, i: number) => sha(chunkBytes?.[i] ?? await Deno.readFile(c.path)))), versions,
+]);
+chunkBytes = null;
 lap("conform");
 const summary = {
   out: outPath, bytes: stat.size, renderer: report.gl?.renderer, frames: report.framesTotal, framesDrawn: report.framesDrawn, drawnRanges: report.drawnRanges, chunks: report.chunks, chunksDrawn: report.chunksDrawn,
@@ -321,18 +338,17 @@ const summary = {
   checks: { texts: checks.texts?.length, belowMin: (checks.texts ?? []).filter((x: any) => x.minPx < parseFloat(film.rules?.find((r: any) => r.id === "min.text")?.kv.px ?? "NaN")).length, collisions: checks.collisions?.length, occluded: Object.keys(checks.occluded ?? {}).length, offFrame: Object.keys(checks.offFrame ?? {}).length, deadKeys: checks.deadKeys?.length },
 };
 // Manifest beside the file: what made it, so a rebuild can check its bytes against this record.
-const firstLine = async (cmd: string, a: string[]) => new TextDecoder().decode((await new Deno.Command(cmd, { args: a, stdout: "piped", stderr: "null" }).output()).stdout).split("\n")[0].trim();
 const manifest = {
-  out: outPath, bytes: stat.size, sha256: await sha(await Deno.readFile(outPath)), comment: `movas:${versionId}`,
+  out: outPath, bytes: stat.size, sha256: outSha, comment: `movas:${versionId}`,
   version: { id: versionId, trees: versionTree, shadowHead: args.shadow || null, dirty: args.dirty === undefined ? null : args.dirty === "1" },
-  shell: { path: SHELL, version: await firstLine(SHELL, ["--version"]) }, gl: report.gl ?? null, ffmpeg: await firstLine("ffmpeg", ["-version"]),
+  shell: { path: SHELL, version: shellVersion }, gl: report.gl ?? null, ffmpeg: ffmpegVersion,
   encoder: { format: formatId, w: tw, h: th, fps: film.fps, scale, preset, crf, threads, chunk: CHUNK, pixFmt: "yuv420p", encKey, keyBase, audio: hasAudio ? "aac_at" : "none", audioBitrate: preview ? "128k" : "320k" },
   range: args.range ?? null, nocache: "nocache" in args, frames: report.framesTotal, framesDrawn: report.framesDrawn,
-  chunks: await Promise.all(report.all.map(async (c: any) => ({ id: c.id, from: c.frames[0], frames: c.frames.length, sha256: await sha(await Deno.readFile(c.path)) }))),
+  chunks: report.all.map((c: any, i: number) => ({ id: c.id, from: c.frames[0], frames: c.frames.length, sha256: chunkShas[i] })),
 };
 await Deno.writeTextFile(`${outPath}.manifest.json`, JSON.stringify(manifest, null, 1));
 if ("pixhash" in args) await Deno.writeTextFile(args.pixhash === "1" ? `${WORK}/pixhash.json` : args.pixhash, JSON.stringify(report.pixHashes));
 console.log(JSON.stringify(summary, null, 1));
 if (!conformance.ok) { for (const m of conformance.problems) console.error(`error output.conformance ${m}`); Deno.exit(5); }
-traceOut("render", { framesDrawn: report.framesDrawn, frames: report.framesTotal, chunksDrawn: report.chunksDrawn, audioMs: Math.round(audioMs), planMs: Math.round(report.planMs ?? 0), page: summary.page });
+traceOut("render", { framesDrawn: report.framesDrawn, frames: report.framesTotal, chunksDrawn: report.chunksDrawn, audioMs: Math.round(audioMs), audioTaskMs: Math.round(audioRes.ms), audioHit: audioRes.hit, planMs: Math.round(report.planMs ?? 0), page: summary.page });
 Deno.exit(0);
