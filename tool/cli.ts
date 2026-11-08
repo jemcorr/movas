@@ -142,6 +142,45 @@ const planFor = async (film: string | null, tag: string, extra: string[] = [], q
   }
 };
 
+/** A scan pass (display-list rows per frame, no pixels), cached by the same key as the plan. */
+const scanFor = async (film: string | null, extra: string[] = []): Promise<{ rows: Map<number, any[]>; checks: any } | null> => {
+  const key = await planKey(film), path = `${WORK}/film-scan-${key}.jsonl`, checksPath = `${WORK}/film-checks-${key}.json`;
+  await Deno.mkdir(WORK, { recursive: true });
+  try { await Deno.stat(path); await Deno.stat(checksPath); } catch {
+    const o = await render(["--planOnly", `--scanOut=${path}.tmp`, `--checksOut=${checksPath}`, "--timeout=180", ...(film ? [`--film=${film}`] : []), ...extra]);
+    if (!o.success) { await Deno.remove(`${path}.tmp`).catch(() => {}); planWhy = firstErrorLine(new TextDecoder().decode(o.stderr)) || "the scan pass stopped"; return null; }
+    await Deno.rename(`${path}.tmp`, path);
+  }
+  const { readScan } = await import("./film.ts");
+  return { rows: readScan(path), checks: JSON.parse(Deno.readTextFileSync(checksPath)) };
+};
+/** The meaning-rule delta against the last saved version, for do and report. */
+const meaningDeltaLines = async (extra: string[] = []): Promise<{ lines: string[]; newValidated: number }> => {
+  const { meaningHits, meaningDelta } = await import("./meaning_delta.ts");
+  const { MeaningError, readMeaning } = await import("./rules.ts");
+  const at = async (film: string | null) => {
+    const dir = film ?? FILM, s = compile(dir), fm = s.film.formats[s.film.defaultFormat];
+    const meaning = readMeaning(dir, `${HERE}/tool`);
+    const sc = await scanFor(film, extra);
+    return sc ? meaningHits({ s, checks: sc.checks, rows: sc.rows, meaning, W: fm.w, H: fm.h }) : null;
+  };
+  try {
+    const now = await at(null);
+    if (!now) return { lines: [`meaning rules: not checked, the scan pass did not run: ${planWhy}`], newValidated: 0 };
+    await ensureHistory();
+    const head = (await git("rev-parse", "--short=12", "--verify", "--quiet", "HEAD")).out.trim();
+    if (!head) return { lines: ["meaning rules: no saved version to compare with."], newValidated: 0 };
+    const dir = await scoreAt(head);
+    let base: Awaited<ReturnType<typeof at>> = null;
+    try { base = await at(dir); } catch { base = null; } finally { await Deno.remove(dir.replace(/\/film$/, ""), { recursive: true }).catch(() => {}); }
+    if (!base) return { lines: ["meaning rules: the saved version does not scan, so there is no baseline."], newValidated: 0 };
+    return meaningDelta(now, base);
+  } catch (e) {
+    if (e instanceof MeaningError) return { lines: [`meaning rules: not checked: ${(e as Error).message}`], newValidated: 0 };
+    throw e;
+  }
+};
+
 // The two verbs whose reading floor the renderer holds, so a miss is a defect. Other verbs read their floor in the score.
 const READ_VERBS = ["punch", "dock"];
 const analyse = (s: any, c: any) => {
@@ -423,6 +462,8 @@ else if (cmd === "at") {
       console.log(L.join("\n"));
     }
   }
+  const md = await meaningDeltaLines(flags);
+  console.log(md.lines.join("\n"));
 } else if (cmd === "windows") {
   // Stability windows for `./movas verify`: every punch line, with land, floor and out from the compiled film, and an ROI from its groups' boxes at land plus 40 px.
   const s = compile(), c = await planFor(null, "windows", [], true);
