@@ -995,6 +995,12 @@ const holdersOf = async (run: Run): Promise<string[]> => {
 };
 
 /** Steps 1 to 8 for an edit: compile, time fit, write, checks, panel fit, frame, preview, decisions, then the block. */
+/** True when film/programs differs from the last save. A failed git call reads as unchanged. */
+const programsChanged = async (ctx: DoCtx): Promise<boolean> => {
+  const r = await ctx.git("status", "--porcelain", "--", "film/programs").catch(() => null);
+  return r !== null && r.ok && r.out.trim() !== "";
+};
+
 const finish = async (
   run: Run,
   form: Form,
@@ -1106,6 +1112,7 @@ const finish = async (
   const newMsgs = [...newD.map((k) => res.an.defects.get(k)!), ...newW.map((k) => res.an.warns.get(k)!)];
   for (const m of newMsgs.slice(0, 3)) out.push(`  new: ${m}`);
   out.push("  not checked: sound, motion, how it reads to a person.");
+  if (await programsChanged(ctx)) out.push("programs changed since the last save: run ./movas purity before you report done.");
   const current = (await linesOf(run, run.path))[run.idx];
   const plain = plainText(textOfRaw(current)?.text ?? "");
   if (run.ownGroups && newMsgs.some((m) => m.startsWith("margin.edge"))) run.notes.push(`these word groups break the margin rule. With plain words do picks groups that fit: ./movas do ${run.scene}.${run.lid} "${plain}"`);
@@ -1191,6 +1198,7 @@ const handReport = async (ctx: DoCtx, preview: boolean): Promise<number> => {
   const newMsgs = [...newD.map((k) => res.an.defects.get(k)!), ...newW.map((k) => res.an.warns.get(k)!)];
   for (const m of newMsgs.slice(0, 3)) out.push(`  new: ${m}`);
   out.push("  not checked: sound, motion, how it reads to a person. To see motion: ./movas look <a>..<b> puts 6 frames of a range on one sheet.");
+  if (await programsChanged(ctx)) out.push("programs changed since the last save: run ./movas purity before you report done.");
   if (notes.length) out.push(`  note: ${notes.join("; ")}`);
   if (frame1) out.push(`  ${frame1}`);
   if (prev) out.push(...prev);
