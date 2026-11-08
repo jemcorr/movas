@@ -699,6 +699,27 @@ const insertEdit = async (run: Run, text: string, digits = ""): Promise<void> =>
   ln.splice(afterIdx + 1, 0, withAt(newRaw, newAt));
   run.idx = afterIdx + 1;
   run.lid = newId;
+  // A punch or dock copy keeps the word groups of the line it copies: one group per hit, the same accent, split as a
+  // text edit splits. Fewer words than groups keep one group per word and the first hits.
+  const shape = shapeOf(textOfRaw(ln[afterIdx])?.text ?? "");
+  if ((run.verb === "punch" || run.verb === "dock") && !hasMarkup(text) && shape.sep !== null && shape.groups.length >= 2) {
+    const words = text.split(" ").filter((w) => w !== "");
+    const n = Math.min(words.length, shape.groups.length);
+    let raw = ln[run.idx];
+    const hits = parseLine(raw, { file: run.path, line: run.idx + 1 })?.kv.hits;
+    if (n < shape.groups.length && hits) {
+      raw = withKey(raw, "hits", hits.split(",").slice(0, n).join(","));
+      run.notes.push(`${words.length} words for ${shape.groups.length} word groups, so ${n} groups and the first ${n} hits`);
+    }
+    const sh: Shape = n === shape.groups.length ? shape : { ...shape, groups: shape.groups.slice(0, n), accent: Array.isArray(shape.accent) ? shape.accent.filter((i) => i < n) : shape.accent };
+    ln[run.idx] = raw;
+    const picked = n >= 2 ? await splitStep(run, raw, sh, text) : null;
+    if (picked) {
+      ln[run.idx] = withText(raw, picked.text);
+      run.split = picked;
+      if (picked.note) run.notes.push(picked.note);
+    } else ln[run.idx] = withText(raw, applyAccent(n >= 2 ? words : [text], sh.sep ?? " / ", sh.accent));
+  }
   run.words.push({ key: "", oldPlain: "", newPlain: plainText(text), pairs: [], here: true });
 };
 
