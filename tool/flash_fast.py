@@ -30,6 +30,23 @@ VF = f"scale={AW}:{AH}:flags=area:in_color_matrix=bt709:in_range=tv,format=rgb24
 FIELD = int(round(2.0 * 300 * math.tan(math.radians(5.0)) * AW / 70.0))  # 10 degrees at 30 cm on a 70 mm wide screen
 NEED = AREA * FIELD * FIELD  # fewer changed pixels than this cannot fill 25% of a field
 
+
+def set_size(path):
+    """Analysis size: the clip's aspect, short side 270 (a 1080x1920 portrait clip gives 270x480, as before).
+    The field is 10 degrees at 30 cm on a screen whose short side is 70 mm."""
+    global AW, AH, FRAME_BYTES, VF, FIELD, NEED
+    out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "csv=p=0", path], capture_output=True, text=True, check=True).stdout.strip().split(",")
+    w, h = int(out[0]), int(out[1])
+    short = 270
+    if w <= h:
+        AW, AH = short, int(round(h * short / w / 2)) * 2
+    else:
+        AW, AH = int(round(w * short / h / 2)) * 2, short
+    FRAME_BYTES = AW * AH * 3
+    VF = f"scale={AW}:{AH}:flags=area:in_color_matrix=bt709:in_range=tv,format=rgb24"
+    FIELD = int(round(2.0 * 300 * math.tan(math.radians(5.0)) * short / 70.0))
+    NEED = AREA * FIELD * FIELD
+
 _v = np.arange(256, dtype=np.float64) / 255.0
 LUT = np.where(_v <= 0.04045, _v / 12.92, ((_v + 0.055) / 1.055) ** 2.4).astype(np.float32)
 LR, LG, LB = LUT * 0.2126, LUT * 0.7152, LUT * 0.0722
@@ -145,6 +162,7 @@ def main():
     ap.add_argument("--ranges")
     ap.add_argument("--margin", type=int, default=WIN)
     a = ap.parse_args()
+    set_size(a.clip)
     ranges = None
     if a.ranges:
         ranges = [(int(m.group(1)), int(m.group(2))) for m in re.finditer(r"(\d+)-(\d+)", a.ranges)]

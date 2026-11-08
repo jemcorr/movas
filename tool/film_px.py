@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Deterministic pixel and sound measures of an encoded film, for `./movas film`. It reads the file only: no model, no score semantics.
-Usage: film_px.py <file.mp4> [--spec=<json>] [--out=<json>] [--text]
-The spec holds {fps, scenes:[{id,from,to}], sfx:[{frame,cls}], beat:{first,fpb,perBar}}. With no spec, scenes come from hard cuts in the file."""
+Usage: film_px.py <file.mp4> --spec=<json> [--out=<json>]
+The spec holds {fps, scenes:[{id,from,to}], sfx:[{frame,cls}], beat:{first,fpb,perBar}}. `./movas film` writes it."""
 import json, re, subprocess, sys
 import numpy as np
 
@@ -123,13 +123,6 @@ def scene_video(a, b, n, mad, cellmad, flow, conf, kf):
     return out
 
 
-def hard_cuts(mad, fps):
-    cuts = [0]
-    for f in np.nonzero(mad > max(8.0, float(np.median(mad)) * 6))[0]:
-        if f - cuts[-1] >= fps / 2: cuts.append(int(f))
-    return cuts
-
-
 def audio():
     raw = subprocess.run(["ffmpeg", "-v", "error", "-nostdin", "-i", FILE, "-vn", "-ar", str(SR), "-ac", "2", "-f", "f32le", "-"], capture_output=True).stdout
     if not raw: return None
@@ -234,9 +227,6 @@ def main():
     fps = spec.get("fps", 30)
     n, mad, cellmad, flow, conf, kf = video()
     scenes = spec.get("scenes")
-    if not scenes:
-        cuts = hard_cuts(mad, fps) + [n]
-        scenes = [{"id": f"shot{i + 1}", "from": cuts[i], "to": cuts[i + 1]} for i in range(len(cuts) - 1)]
     a = sound(fps)
     per = a.pop("per", None)
     table = []
@@ -246,13 +236,6 @@ def main():
     gaps = np.diff(kf).tolist() if len(kf) > 1 else []
     res = {"file": FILE, "frames": n, "kfGap": int(np.median(gaps)) if gaps else None, "scenes": table, "audio": a, "cellGrid": [CX, CY]}
     if opt("out"): json.dump(res, open(opt("out"), "w"))
-    if "--text" in sys.argv:
-        print(f"{n} frames, keyframe every {res['kfGap']} frames, {len(table)} shots by hard cut. Cells {CX} across, {CY} down. No score: nothing here is list-derived.")
-        print("| shot | s | MAD med/p95 | kf excess/ratio | stepShare/even | rev max | M LUFS | hits |")
-        print("|---|---|---|---|---|---|---|---|")
-        for t in table:
-            print(f"| {t['id']} | {t['from'] / fps:.1f}+{(t['to'] - t['from']) / fps:.1f} | {t.get('mad')}/{t.get('mad95')} | {t.get('kfExcess')}/{t.get('kfRatio')} | {t.get('stepShare')}/{t.get('stepEven')} | {t.get('revMax')} | {t.get('M')} | {t.get('hits')} |")
-        print(f"sound: I {a.get('I')} LUFS, LRA {a.get('LRA')}, peak {a.get('peak')} dBFS, clipped samples {a.get('clipSamples')}, silence {a.get('silence')}, bpm guess {a.get('bpmGuess')}")
 
 
 main()

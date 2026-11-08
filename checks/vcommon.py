@@ -1,28 +1,9 @@
-"""Shared helpers for the video checks: ffmpeg frame streaming, timeline, results file.
+"""Shared helpers for the text-stability check: ffmpeg frame streaming and ffprobe.
 
-Only numpy, PIL and the ffmpeg/ffprobe binaries are used.
+Only the ffmpeg and ffprobe binaries are used.
 """
-import bisect
 import json
-import os
 import subprocess
-
-import numpy as np
-
-# movas runs these checks from MOVAS_CHECKS, with the film's MOVAS_WORK in the environment. They write under that work folder only.
-CHECKS = os.path.dirname(os.path.abspath(__file__))
-WORK = os.path.join(os.environ.get("MOVAS_WORK") or os.path.join(os.getcwd(), ".work"), "checks")
-CONTROLS = os.path.join(WORK, "controls")
-MANIFEST = os.path.join(CONTROLS, "manifest.json")
-RESULTS = os.path.join(WORK, "results-video.json")
-SOLVED = os.path.join(WORK, "solved.json")
-# --master and --preview read these; movas verify passes --file, so it needs neither.
-MASTER = os.environ.get("MOVAS_MASTER", "")
-PREVIEW = os.environ.get("MOVAS_PREVIEW", "")
-FPS = 30
-MASTER_WH = (1080, 1920)
-PREVIEW_WH = (540, 960)
-AW, AH = 270, 480  # analysis size (portrait, 1/4 of master)
 
 
 def stream(path, vf, frame_bytes, pix_fmt):
@@ -54,48 +35,3 @@ def probe(path):
                           "-show_format", "-show_streams", path],
                          capture_output=True, check=True).stdout
     return json.loads(out)
-
-
-def load_timeline():
-    with open(SOLVED) as fh:
-        doc = json.load(fh)
-    scenes = doc["scenes"]
-    starts = [s["startFrame"] for s in scenes]
-    return doc, scenes, starts
-
-
-def scene_index(starts, frame):
-    """Scene partition by scene start frames (the overlapping s06/s07 frames go to s07)."""
-    return max(0, bisect.bisect_right(starts, frame) - 1)
-
-
-def load_manifest(check=None):
-    with open(MANIFEST) as fh:
-        items = json.load(fh)
-    return [it for it in items if check is None or it["check"] == check]
-
-
-def _jsonable(obj):
-    if isinstance(obj, np.bool_):
-        return bool(obj)
-    if isinstance(obj, np.integer):
-        return int(obj)
-    if isinstance(obj, np.floating):
-        return float(obj)
-    if isinstance(obj, np.ndarray):
-        return obj.tolist()
-    raise TypeError(f"not JSON serializable: {type(obj)}")
-
-
-def update_results(section, payload):
-    """Write payload under results-video.json[section]; other sections are kept."""
-    os.makedirs(WORK, exist_ok=True)
-    data = {}
-    if os.path.exists(RESULTS):
-        with open(RESULTS) as fh:
-            data = json.load(fh)
-    data[section] = payload
-    tmp = RESULTS + ".tmp"
-    with open(tmp, "w") as fh:
-        json.dump(data, fh, indent=2, ensure_ascii=False, default=_jsonable)
-    os.replace(tmp, RESULTS)

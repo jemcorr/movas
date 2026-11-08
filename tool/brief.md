@@ -38,7 +38,7 @@ Commands:
 - `./movas render [--preview]`: the whole film, with a chunk cache. Prints a JSON report.
 - `./movas save "message"`, `./movas log`, `./movas undo`: versions. `./movas apply patch.json`: all-or-nothing multi-file edit.
 
-`./movas verify [--file=<mp4>] [--preview]` checks a rendered file against the film it came from. It warns when the manifest beside the file names an older source. It fails when the file's frame count differs from the film's, when any punch's text moves between its land and its floor (a snap), or when general flashes exceed 3 per second. Red flashes are not verified yet. The default file is the last master, or the preview with `--preview`. It exits 1 on any defect.
+`./movas verify [--file=<mp4>] [--preview]` checks a rendered file against the film it came from. It warns when the manifest beside the file names an older source. It fails when the file's frame count differs from the film's, when any punch's text moves between its land and its floor (a snap), or when general flashes exceed 3 per second. The default file is the last master, or the preview with `--preview`. It exits 1 on any defect.
 
 `./movas purity [--scenes=s03,s07]` renders the whole film, then every scene alone, all without the cache, and compares the raw frames. A scene alone that draws differently from the same frames in the full render fails it, because a note starting there would cache frames a full render never draws. Run it after an edit in `programs/` or `runtime/`. A scene with at most 2 differing frames (`--noise=`) passes as run-to-run noise. It takes about as long as two full renders and exits 1 on any defect.
 

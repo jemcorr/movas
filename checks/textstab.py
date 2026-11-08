@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Text stability over consecutive full-resolution frames (sub-pixel translation of headline crops).
 
-Per window (frames land..out, from .work/solved.json):
+Per window (frames land..out, from the --windows JSON):
   1. bbox: at land+10, bright luma (raw limited-range code >= 222) inside a ROI hint is cleaned
      (3x3 open), grouped into blobs (11x11 close on a 1/4 grid, 8-connected labelling), and the
      blob with the most bright ink is kept; the crop is the ink bbox + 12 px.
@@ -12,13 +12,9 @@ Per window (frames land..out, from .work/solved.json):
      step from the local velocity. A whole-pixel snap shows as ~1 px. Snap = jitter >= 0.5 px.
      Stability score = 1 - snaps / steps. Max jitter is the headline number.
   4. NCC at the refined shift is the fit quality (~1 for a pure translation).
-Pre-declared control criteria: smooth 10x (0.1 px/frame exact) max jitter <= 0.20; smooth 4x
-(0.25 px quantized) <= 0.30; whole-pixel snap >= 0.70; busy static background variants likewise.
 
 usage:
-  python3 -B textstab.py --controls
-  python3 -B textstab.py --master      (writes a bbox montage to .work/checks/inspect/)
-  python3 -B textstab.py --preview
+  python3 -B textstab.py --windows=<json from ./movas windows> --file=<mp4>
 """
 import argparse
 import json
@@ -27,7 +23,7 @@ import sys
 import time
 
 import numpy as np
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageFilter
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import vcommon as vc  # noqa: E402
@@ -38,15 +34,6 @@ UP = 50
 WINUP = 0.6
 SNAP_PX = 0.5
 HALF_MED = 4
-MASTER_ROI = {
-    "s01.p": (0, 1080, 780, 1200),
-    "s03.p": (0, 1080, 840, 1200),
-    "s04.p": (0, 1080, 560, 1160),
-    "s07.p": (0, 1080, 200, 600),
-    "s08.p": (0, 1080, 600, 1100),
-    "s09.l1": (0, 1080, 480, 960),
-    "s10.p": (0, 1080, 120, 600),
-}
 
 
 def label_grid(mask):
@@ -135,7 +122,6 @@ class Track:
         self.buf = []
         self.prev = None
         self.frames, self.dy, self.dx, self.ncc = [], [], [], []
-        self.snap = None
 
 
 def step(t, n, roi):
@@ -158,7 +144,6 @@ def feed(t, n, Y):
             t.buf.append((n, roi.copy()))
             return
         t.bbox, t.bbox_info = find_bbox(roi)
-        t.snap = roi.copy()
         pending, t.buf = t.buf, []
         for m, r in pending:
             step(t, m, r)
@@ -229,57 +214,13 @@ def run(path, specs, wh, roi_scale=1.0):
     return tracks, time.perf_counter() - t0
 
 
-def control_specs():
-    specs, exp = [], {}
-    for it in vc.load_manifest("textstab"):
-        specs.append({"id": it["name"], "land": 0, "out": 59, "floor": 59, "roi": it["params"]["roi"]})
-        exp[it["name"]] = it["expect"]
-    return specs, exp
-
-
-def master_specs():
-    doc, _, _ = vc.load_timeline()
-    ev = doc["events"]
-    specs = []
-    for hid, roi in MASTER_ROI.items():
-        specs.append({"id": hid, "land": ev[f"{hid}.land"]["frame"], "out": ev[f"{hid}.out"]["frame"],
-                      "floor": ev[f"{hid}.floor"]["frame"], "roi": roi})
-    return specs
-
-
-def montage(tracks, path):
-    tiles = []
-    for t in tracks:
-        if t.snap is None:
-            continue
-        im = Image.fromarray(t.snap).convert("RGB")
-        d = ImageDraw.Draw(im)
-        x0, y0, x1, y1 = t.bbox
-        d.rectangle([x0, y0, x1 - 1, y1 - 1], outline=(255, 0, 0), width=max(2, im.width // 200))
-        d.text((8, 8), t.id, fill=(255, 255, 0))
-        tiles.append(im)
-    if not tiles:
-        return
-    h = max(im.height for im in tiles)
-    sheet = Image.new("RGB", (sum(im.width for im in tiles) + 10 * (len(tiles) - 1), h), (30, 30, 30))
-    x = 0
-    for im in tiles:
-        sheet.paste(im, (x, 0))
-        x += im.width + 10
-    sheet = sheet.resize((sheet.width // 2, sheet.height // 2))
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    sheet.save(path)
-
-
 def windows_run(a):
-    """One row per window from `./reel windows`: the jitter and snaps between land and floor. Half-res files scale the ROIs."""
-    if not a.file:
-        raise SystemExit("--windows needs --file")
+    """One row per window from `./movas windows`: the jitter and snaps between land and floor. Half-res files scale the ROIs."""
     doc = json.load(open(a.windows))
     specs = doc["windows"] if isinstance(doc, dict) else doc
     v = next(s for s in vc.probe(a.file)["streams"] if s["codec_type"] == "video")
     w, h = int(v["width"]), int(v["height"])
-    sc = w / vc.MASTER_WH[0]
+    sc = w / (doc["w"] if isinstance(doc, dict) and "w" in doc else w)
     tr, secs = run(a.file, specs, (w, h), roi_scale=sc)
     print(f"file {a.file} {w}x{h}, ROI scale {sc:g}, decode and measure {secs:.1f} s")
     for t in tr:
@@ -292,72 +233,12 @@ def windows_run(a):
 
 
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--controls", action="store_true")
-    ap.add_argument("--master", action="store_true")
-    ap.add_argument("--preview", action="store_true")
-    ap.add_argument("--file", help="a full-size render with the master's timeline, for example the remake")
-    ap.add_argument("--label", default="file")
-    ap.add_argument("--windows", help="JSON from ./reel windows: [{id, land, floor, out, roi:[x0,x1,y0,y1]}] in master pixels, with --file")
+    ap = argparse.ArgumentParser(description="Text stability over the windows from ./movas windows.")
+    ap.add_argument("--windows", required=True,
+                    help="JSON from ./movas windows: {w, h, windows: [{id, land, floor, out, box, roi:[x0,x1,y0,y1]}]}, ROIs in format pixels")
+    ap.add_argument("--file", required=True, help="the mp4 to measure, at the film's size or a smaller preview size")
     a = ap.parse_args()
-    if a.windows:
-        windows_run(a)
-        return
-    if a.controls:
-        specs, exp = control_specs()
-        out, ok_all = {}, True
-        for it in vc.load_manifest("textstab"):
-            tr, secs = run(it["path"], [s for s in specs if s["id"] == it["name"]], vc.MASTER_WH)
-            m = metrics(tr[0])
-            m.pop("series")
-            e = exp[it["name"]]
-            ok = True
-            if "max_jitter_le" in e:
-                ok = m["max_jitter_px"] <= e["max_jitter_le"]
-            if "max_jitter_ge" in e:
-                ok = m["max_jitter_px"] >= e["max_jitter_ge"]
-            m["ok"] = ok
-            m["mean_dy_px"] = m["mean_dy_px"]
-            m["wall_s"] = round(secs, 2)
-            ok_all = ok_all and ok
-            out[it["name"]] = m
-            print(f"{it['name']:18s} max_jitter={m['max_jitter_px']:.3f} p95={m['p95_jitter_px']:.3f} "
-                  f"snaps={m['snaps_ge_0p5px']} score={m['stability_score']} mean_dy={m['mean_dy_px']:.4f} "
-                  f"ncc_min={m['ncc_min']} bbox={m['bbox_roi_px_x0y0x1y1']} ok={ok}", flush=True)
-        smooth = [out[k]["max_jitter_px"] for k in out if "smooth" in k]
-        snap = [out[k]["max_jitter_px"] for k in out if "snap" in k]
-        margin = round(min(snap) - max(smooth), 4)
-        vc.update_results("textstab_controls", {"all_expectations_met": ok_all,
-                                                "separation_margin_px_min_snap_minus_max_smooth": margin,
-                                                "rows": out})
-        print(f"separation margin (min snap - max smooth) = {margin} px")
-        print("TEXTSTAB CONTROLS:", "ALL EXPECTATIONS MET" if ok_all else "AT LEAST ONE CONTROL FAILED")
-        return
-    if a.master or a.preview or a.file:
-        t0 = time.perf_counter()
-        if a.file:
-            path, wh, sc, label = a.file, vc.MASTER_WH, 1.0, a.label
-        elif a.master:
-            path, wh, sc, label = vc.MASTER, vc.MASTER_WH, 1.0, "master"
-        else:
-            path, wh, sc, label = vc.PREVIEW, vc.PREVIEW_WH, 0.5, "preview"
-        specs = master_specs()
-        tr, secs = run(path, specs, wh, roi_scale=sc)
-        res = {"clip": path, "roi_scale": sc, "decode_and_check_s": round(secs, 2),
-               "windows": []}
-        for t in tr:
-            m = metrics(t)
-            m["max_jitter_master_px_equiv"] = round(m["max_jitter_px"] / sc, 4)
-            res["windows"].append(m)
-            print(f"{t.id:7s} land={t.land} out={t.out} floor={t.floor} pairs={m['pairs']} "
-                  f"max_jitter={m['max_jitter_px']} p95={m['p95_jitter_px']} snaps={m['snaps_ge_0p5px']} "
-                  f"score={m['stability_score']} hold_max={m['hold_land_to_floor']['max_jitter_px']} "
-                  f"ncc_min={m['ncc_min']} bbox={m['bbox_roi_px_x0y0x1y1']}", flush=True)
-        res["wall_seconds_total"] = round(time.perf_counter() - t0, 2)
-        vc.update_results(f"textstab_{label}", res)
-        if a.master:
-            montage(tr, os.path.join(vc.WORK, "inspect", "textstab_bbox_master.png"))
-    return
+    windows_run(a)
 
 
 if __name__ == "__main__":

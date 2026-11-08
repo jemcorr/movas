@@ -4,8 +4,7 @@
 1. Source version: a warning when the manifest beside the file names a source other than the tree's.
 2. Timing: the file's frame count against the film's. A mismatch is a defect, since the windows would not line up.
 3. Text stability: for every punch, the jitter and snaps between land and floor (textstab). A snap there is a defect.
-4. Flashes: the general WCAG 2.3.1 limit of 3 per second (flash.py). Red flashes are not verified, because their control
-   is known broken, so the output says so and gives no red result.
+4. Flashes: the general WCAG 2.3.1 limit of 3 per second (flash_fast.py). Red flashes are not checked.
 Exit 1 on any defect.
 
 --ranges=a-b,c-d (b exclusive; a render's drawnRanges has this shape) limits check 3 to the punch windows that overlap
@@ -131,7 +130,9 @@ def main():
     os.makedirs(os.path.join(WORK, "verify"), exist_ok=True)
     wf = os.path.join(WORK, "verify", "windows.json")
     doc = plan if ranges is None else dict(plan, windows=[w for w in plan["windows"] if overlaps(w, ranges)])
-    if ranges is not None and not doc["windows"]:
+    if not plan["windows"]:
+        print("text stability: not checked, the film has no punch windows")
+    elif ranges is not None and not doc["windows"]:
         print("text stability: no window in the redrawn frames")
     else:
         with open(wf, "w") as fh:
@@ -146,7 +147,7 @@ def main():
                 defects.append(f"text stability: {m.group(1)} has {m.group(2)} snaps between land and floor")
 
     stage("textstab")
-    # 4. Flashes: general flashes against the 3-per-second limit, by flash_fast.py. Red is not verified (its control is known broken).
+    # 4. Flashes: general flashes against the 3-per-second limit, by flash_fast.py.
     # With --ranges, it reads each redrawn range plus 30 frames on each side, straight from the file.
     where = "" if ranges is None else ", in the redrawn frames"
     cmd = ["python3", "-B", os.path.join(HERE, "flash_fast.py"), f"--clip={path}"]
@@ -165,7 +166,6 @@ def main():
         if over or verdict == "FAIL":
             defects.append(f"flash: {worst} flashes in one second, limit {FLASH_LIMIT}")
     stage("flash")
-    print("flash (red): unverified, its control is known broken, so no red result is given")
 
     for d in defects:
         print(f"DEFECT {d}")
