@@ -517,11 +517,11 @@ else if (cmd === "at") {
 else if (cmd === "log") { await ensureHistory(); console.log((await git("log", "--format=%h %cI %s", "-n", "20")).out.trim()); }
 else if (cmd === "undo") {
   await ensureHistory();
-  // The working score goes back to the last saved version. Uncommitted work is saved first, so undo cannot lose it.
+  // The film, programs included, goes back to the last saved version. Uncommitted work is saved first, so undo cannot lose it.
   const keep = await save("autosave before undo");
-  const r = await git("checkout", `${keep}~1`, "--", "film", ":(exclude)film/programs");
+  const r = await git("checkout", `${keep}~1`, "--", "film");
   if (!r.ok) throw new Error(r.err);
-  console.log(`score is back at ${keep}~1. The undone state is ${keep}.`);
+  console.log(`film is back at ${keep}~1, programs included. The undone state is ${keep}.`);
 } else if (cmd === "diff") {
   await ensureHistory();
   const [a = "HEAD", b] = rest, da = await scoreAt(a), db = b ? await scoreAt(b) : FILM;
