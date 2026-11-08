@@ -37,10 +37,18 @@ for (const name of ["error", "warn"]) {
   console[name] = (...a) => { const s = a.map((x) => String(x?.message ?? x)).join(" "); if (/Content Security Policy|Refused to|ERR_BLOCKED|ERR_NAME_NOT_RESOLVED/.test(s)) blocked(`blocked by console: ${s}`); orig(...a); };
 }
 
-// Time and chance are not available to programs. Frames depend on nothing but their inputs.
+// The common clocks and random sources are blocked in programs. This is not total: GL, bake and image-load state can still
+// leak between frames, so ./movas purity is the determinism check.
 const ban = (name) => () => { throw new Error(`${name} is not available to scene programs`); };
 const realNow = performance.now.bind(performance);
-Math.random = ban("Math.random"); Date.now = ban("Date.now");
+Math.random = ban("Math.random"); Date.now = ban("Date.now"); performance.now = ban("performance.now");
+crypto.getRandomValues = ban("crypto.getRandomValues"); crypto.randomUUID = ban("crypto.randomUUID");
+// A Date of a given time stays available; the current time does not.
+const RealDate = Date;
+globalThis.Date = new Proxy(RealDate, {
+  construct: (t, args) => { if (!args.length) throw new Error("new Date() with no time is not available to scene programs"); return new t(...args); },
+  apply: () => { throw new Error("Date() is not available to scene programs"); },
+});
 
 const hash53 = (str, seed = 0) => { let h1 = 0xdeadbeef ^ seed, h2 = 0x41c6ce57 ^ seed; for (let i = 0; i < str.length; i++) { const c = str.charCodeAt(i); h1 = Math.imul(h1 ^ c, 2654435761); h2 = Math.imul(h2 ^ c, 1597334677); } h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909); h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909); return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36); };
 const rx = []; let wake = null;

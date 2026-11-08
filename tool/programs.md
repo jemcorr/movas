@@ -1,6 +1,6 @@
 # Writing a scene program
 
-A scene program is a pure JavaScript function from a local frame number to a display list of drawing operations. One WebGL2 compositor draws the list. There is no React. HTML and CSS exist through one op, `html`, below. `Math.random` and `Date.now` throw. three.js calls `Math.random`, so load it with `const { THREE, addons } = await loadThree(1, ["three/addons/loaders/GLTFLoader.js"])` from `../lib.js`, and build objects inside `withSeeded(1, () => ...)`. Elsewhere, use `rand(n)` from `programs/lib.js` for chance.
+A scene program is a pure JavaScript function from a local frame number to a display list of drawing operations. One WebGL2 compositor draws the list. There is no React. HTML and CSS exist through one op, `html`, below. `Math.random`, `Date.now`, `performance.now`, `new Date()` with no time, `crypto.getRandomValues` and `crypto.randomUUID` throw. That blocks the common clocks and random sources; it does not prove a program pure, so run `./movas purity` after a program edit. three.js calls `Math.random`, so load it with `const { THREE, addons } = await loadThree(1, ["three/addons/loaders/GLTFLoader.js"])` from `../lib.js`, and build objects inside `withSeeded(1, () => ...)`. Elsewhere, use `rand(n)` from `programs/lib.js` for chance.
 
 A module lives at `film/programs/scenes/<name>.js` and joins the film by being there. It imports `../lib.js` as written below, and the renderer finds the tool's `programs/lib.js`. A file in `film/programs/` wins over one of the same name in `programs/`:
 
