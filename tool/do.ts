@@ -767,6 +767,9 @@ const commit = async (run: Run): Promise<void> => {
 };
 
 const errorsOf = (s: Solved) => s.problems.filter((p) => p.level === "error");
+const NOT_CHECKED = "sound, motion other than steps and spikes, how it reads to a person";
+/** One row per GL program with no track() hook in the scenes this plan tracked: the motion check cannot see inside it. */
+const blindRows = (plan: any): string[] => [...new Set<string>((plan?.motion?.runs ?? []).filter((r: any) => r.tracked).flatMap((r: any) => r.blind ?? []))].sort().map((p) => `  motion inside ${p} not checked.`);
 const scopedTo = (key: string, scene: string) => key.split(/[\s|]+/).some((t) => t === scene || t.startsWith(`${scene}.`));
 
 /** Step 4, panel fit: Family L on the panel the edited line sits in, the first candidate with no new issue in this scene wins. */
@@ -1115,7 +1118,7 @@ const finish = async (
   if (md) out.push(...md.lines.map((l) => `  ${l}`));
   const newMsgs = [...newD.map((k) => res.an.defects.get(k)!), ...newW.map((k) => res.an.warns.get(k)!)];
   for (const m of newMsgs.slice(0, 3)) out.push(`  new: ${m}`);
-  out.push("  not checked: sound, motion, how it reads to a person.");
+  out.push(`  not checked: ${NOT_CHECKED}.`, ...blindRows(res.plan));
   if (await programsChanged(ctx)) out.push("programs changed since the last save: run ./movas purity before you report done.");
   const current = (await linesOf(run, run.path))[run.idx];
   const plain = plainText(textOfRaw(current)?.text ?? "");
@@ -1149,7 +1152,7 @@ const finish = async (
     if (newW.length) R.push(`${newW.length} new warnings: ${newW[0]}.`);
     if (newD.length) R.push(`${newD.length} new defects: ${newD[0]}.`);
   }
-  R.push(...dec.report, "Sound and motion not checked.");
+  R.push(...dec.report, "Sound and motion other than steps and spikes not checked.");
   out.push(`report (send it after you read the frame): ${reportText(R)}`);
   console.log(out.join("\n"));
   return newD.length || md?.newValidated ? 1 : 0;
@@ -1204,7 +1207,7 @@ const handReport = async (ctx: DoCtx, preview: boolean): Promise<number> => {
   if (md) out.push(...md.lines.map((l) => `  ${l}`));
   const newMsgs = [...newD.map((k) => res.an.defects.get(k)!), ...newW.map((k) => res.an.warns.get(k)!)];
   for (const m of newMsgs.slice(0, 3)) out.push(`  new: ${m}`);
-  out.push("  not checked: sound, motion, how it reads to a person. To see motion: ./movas look <a>..<b> puts 6 frames of a range on one sheet.");
+  out.push(`  not checked: ${NOT_CHECKED}. To see motion: ./movas look <a>..<b> puts 6 frames of a range on one sheet.`, ...blindRows(res.plan));
   if (await programsChanged(ctx)) out.push("programs changed since the last save: run ./movas purity before you report done.");
   if (notes.length) out.push(`  note: ${notes.join("; ")}`);
   if (frame1) out.push(`  ${frame1}`);
@@ -1217,7 +1220,7 @@ const handReport = async (ctx: DoCtx, preview: boolean): Promise<number> => {
     if (newW.length) R.push(`${newW.length} new warnings: ${newW[0]}.`);
     if (newD.length) R.push(`${newD.length} new defects: ${newD[0]}.`);
   }
-  R.push("Sound and motion not checked.");
+  R.push("Sound and motion other than steps and spikes not checked.");
   out.push(`report (send it after you read the frame): ${reportText(R)}`);
   console.log(out.join("\n"));
   return newD.length || md?.newValidated ? 1 : 0;
