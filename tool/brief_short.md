@@ -10,7 +10,7 @@ The film's source is the `.movas` files in `film/`. One line is one event: `verb
 ./movas do insert <scene>.<id> "words"       add a line after this one, with the same verb, panel, side and sound
 ./movas do remove <scene>.<id>
 ./movas do                                   after you edit film/ or programs/ by hand
-Add --preview to also render the half-res film. It prints the path.
+Add --preview to also render the half-res film. It prints the path. `./movas do <scene>.<id> --why` lists the choices for that line, ranked, with what each costs, and changes nothing.
 
 When `do` says NOT DONE or edit by hand, or the note needs a program, edit by hand, then run plain `./movas do`. Every edit, by `do` or by hand, ends in plain `./movas do`: it gives the verdict, DONE or NOT DONE. After an edit in `film/programs/`, also run `./movas purity` before you report done: it renders each scene alone and compares, about as long as two full renders.
 

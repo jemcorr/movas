@@ -248,7 +248,6 @@ const analysisNow = async () => { const c = await planFor(null, "now", [], true)
 
 const sceneFile = (id: string) => [...Deno.readDirSync(FILM)].map((e) => e.name).find((n) => n.startsWith(`${id}-`));
 // Helpers for changed, compare, rebuild and apply.
-const dirty = async () => { await git("add", "-A", ...TRACKED); return !(await git("diff", "--cached", "--quiet", "HEAD")).ok; };
 const sha256File = async (p: string) => sha256Hex(await Deno.readFile(p));
 const archiveTo = async (ref: string, paths: string[], dir: string) => {
   const a = await new Deno.Command("git", { args: [`--git-dir=${HISTORY}`, "archive", ref, ...paths], stdout: "piped", stderr: "piped" }).output();
@@ -567,36 +566,13 @@ else if (cmd === "undo") {
   await ensureHistory();
   const [a = "HEAD", b] = rest, da = await scoreAt(a), db = b ? await scoreAt(b) : FILM;
   console.log(impactText(impact(compile(da), compile(db))));
-} else if (cmd === "apply") {
-  // All or nothing: the patch lands on a copy, the copy must compile, and only then the working score changes.
-  // Unsaved work is saved first, so undo returns to exactly the bytes from before this apply. The apply itself is not
-  // saved: like any edit, ./movas save keeps it and ./movas undo drops it.
-  const patch = JSON.parse(Deno.readTextFileSync(rest[0])) as { file: string; old: string; new: string }[];
-  const tmp = await Deno.makeTempDir({ dir: WORK, prefix: "apply-" });
-  let code = 0;
-  try {
-    for (const e of Deno.readDirSync(FILM)) if (e.isFile) Deno.copyFileSync(`${FILM}/${e.name}`, `${tmp}/${e.name}`);
-    for (const p of patch) {
-      const path = `${tmp}/${p.file}`, s = Deno.readTextFileSync(path);
-      if (!s.includes(p.old)) throw new Error(`apply refused, nothing changed: ${p.file} does not hold ${JSON.stringify(p.old.slice(0, 80))}`);
-      Deno.writeTextFileSync(path, s.replace(p.old, () => p.new));
-    }
-    const s = compile(tmp), errs = s.problems.filter((x: any) => x.level === "error");
-    if (errs.length) throw new Error(errs.map((e: any) => `${e.code} ${e.msg}`).join("\n") + "\napply refused, nothing changed.");
-    await ensureHistory();
-    if (await dirty()) await save("autosave before apply");
-    for (const p of patch) Deno.copyFileSync(`${tmp}/${p.file}`, `${FILM}/${p.file}`);
-    console.log(`applied ${patch.length} changes to the working score, not saved. ./movas save "msg" keeps them; ./movas undo drops them.`);
-  } catch (e) {
-    console.error((e as Error).message); code = 1;
-  } finally {
-    await Deno.remove(tmp, { recursive: true }).catch(() => {});
-  }
-  if (code) Deno.exit(code);
 } else if (cmd === "options") {
-  // The choices for one line, each with its cost against the saved version. The logic is in options.ts.
+  console.error("options is now ./movas do <scene>.<id> --why");
+  Deno.exit(2);
+} else if (cmd === "do" && rest.includes("--why")) {
+  // The choices for one line, each with its cost against the saved version, ranked. Nothing changes unless --take= picks one. The logic is in options.ts.
   const { options } = await import("./options.ts");
-  Deno.exit(await options(rest, { FILM, WORK, PUBLIC, hasSaved: async () => { await ensureHistory(); return (await git("rev-parse", "--verify", "--quiet", "HEAD")).ok; }, scoreAt, planFor, analyse }));
+  Deno.exit(await options(rest.filter((a) => a !== "--why"), { FILM, WORK, PUBLIC, hasSaved: async () => { await ensureHistory(); return (await git("rev-parse", "--verify", "--quiet", "HEAD")).ok; }, scoreAt, planFor, analyse }));
 } else if (cmd === "film") {
   // The film as text: outline, meaning facts, motion, sound, claims. No model. --file= names the encoded film, otherwise the last preview. --section=outline,flags,facts,motion,sound,ledger.
   const { buildReport, readScan } = await import("./film.ts");
@@ -635,4 +611,4 @@ else if (cmd === "undo") {
 } else if (cmd === "do") {
   const { doCmd } = await import("./do.ts");
   Deno.exit(await doCmd(rest, { HERE: ROOT, TOOL: HERE, FILM, WORK, PUBLIC, PORT, render, planFor, planError: () => planWhy, analyse, compile, readDirection, readKnown, git, ensureHistory, pictureNow: () => planFor(null, "pic0", [], true), meaningDelta: () => meaningDeltaLines([]) }));
-} else console.log("usage: movas brief [scene] | help [scene|programs|rules] | check [--full] | report | probe | timeline | at <q> | look <q>... | render | save <msg> | log | undo | diff <a> [b] | apply <patch.json> | compare <ref> <event>... | rebuild <ref> <out> [--expect=sha256] | doctor [--freeze|--restore] | windows | film [--section=] [--file=] | leak | test-rules | test-ops");
+} else console.log("usage: movas brief [scene] | help [scene|programs|rules] | check [--full] | report | probe | timeline | at <q> | look <q>... | render | save <msg> | log | undo | diff <a> [b] | do <scene>.<id> [words|key=value|--why] | compare <ref> <event>... | rebuild <ref> <out> [--expect=sha256] | doctor [--freeze|--restore] | windows | film [--section=] [--file=] | leak | test-rules | test-ops");

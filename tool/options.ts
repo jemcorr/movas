@@ -1,4 +1,4 @@
-// movas options <scene>.<line id> [--take=X]: the choices for one line, each with its cost against the last saved
+// movas do <scene>.<line id> --why [--take=X]: the choices for one line, each with its cost against the last saved
 // version. A choice is the score with one source line changed, compiled from a temporary copy of film/. Nothing is saved.
 import { type Clock, impact, loadFilm, type Solved, solve } from "./movas.ts";
 
@@ -78,7 +78,7 @@ export const options = async (args: string[], ctx: OptionsCtx): Promise<number> 
   const id = args.find((a) => !a.startsWith("--")) ?? "";
   const take = args.find((a) => a.startsWith("--take="))?.slice("--take=".length);
   const dot = id.indexOf(".");
-  if (dot < 1 || dot === id.length - 1) throw new Error("usage: ./movas options <scene>.<line id> [--take=X]");
+  if (dot < 1 || dot === id.length - 1) throw new Error("usage: ./movas do <scene>.<line id> --why [--take=X]");
   const scene = id.slice(0, dot), lineId = id.slice(dot + 1);
   const now = solve(loadFilm(ctx.FILM), ctx.PUBLIC);
   const lines = now.film.scenes[scene]?.lines ?? [];
@@ -234,7 +234,7 @@ export const options = async (args: string[], ctx: OptionsCtx): Promise<number> 
     console.log(`options for ${id}, costs against ${saved ? "the last saved version" : "the working score (no saved version yet)"}. Times are computed. What reads well is the director's call.`);
     console.log(row("now", nowChoice, phaseOn));
     top.forEach((ch, i) => console.log(row(letter(i), ch, phaseOn)));
-    console.log(top.length ? `Take one with: ./movas options ${id} --take=${letter(0)}` : `No choice changes ${id}.`);
+    console.log(top.length ? `Take one with: ./movas do ${id} --why --take=${letter(0)}` : `No choice changes ${id}.`);
     return 0;
   } finally {
     await Deno.remove(tmp, { recursive: true }).catch(() => {});
