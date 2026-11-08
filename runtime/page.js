@@ -86,7 +86,14 @@ const gl = canvas.getContext("webgl2", { antialias: false, alpha: false, depth: 
 if (!gl) { say({ t: "error", msg: "no webgl2" }); throw new Error("no webgl2"); }
 const dbg = gl.getExtension("WEBGL_debug_renderer_info");
 const programs = {}; const extra = {};
-for (const url of job.modules ?? []) { const m = await import(url); await m.install?.({ gl, programs, extra, solved: job.solved, fmt }); }
+// Which module installed each scene function (x:<scene>) and each GL program (p:<name>): the motion check names it.
+const installedBy = {};
+for (const url of job.modules ?? []) {
+  const m = await import(url), x0 = { ...extra }, p0 = { ...programs };
+  await m.install?.({ gl, programs, extra, solved: job.solved, fmt });
+  for (const k in extra) if (extra[k] !== x0[k]) installedBy[`x:${k}`] = url;
+  for (const k in programs) if (programs[k] !== p0[k]) installedBy[`p:${k}`] = url;
+}
 const comp = new Compositor(gl, fmt.w, fmt.h, programs, job.scale ?? 1);
 const film = makeFilm(job.solved, comp, fmt, extra);
 say({ t: "gl", renderer: dbg && gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL), version: gl.getParameter(gl.VERSION), readFormat: gl.getParameter(gl.IMPLEMENTATION_COLOR_READ_FORMAT) });
@@ -174,6 +181,15 @@ if (job.checks !== false && job.motion) {
   const sceneAt = (f) => { let id = null; for (const s of scenes) if (f >= s.startFrame && f < s.endFrame) id = s.id; return id; };
   const runs = []; let run = null;
   for (const f of frames) { if (!run || starts.has(f) || f !== run.to) { run = { from: f, to: f + 1 }; runs.push(run); } else run.to = f + 1; }
+  // The module that draws a scene's group: its own scene function, else its program, else the tool's blocking in film.js.
+  const programOf = new Map(scenes.map((s) => [s.id, s.program]));
+  const drawers = new Map();
+  const drawer = (sc) => {
+    if (sc === null) return null;
+    let d = drawers.get(sc);
+    if (d === undefined) drawers.set(sc, d = installedBy[`x:${sc}`] ?? installedBy[`p:${programOf.get(sc)}`] ?? "/programs/film.js");
+    return d;
+  };
   const base = job.motionBase ?? {};
   motion = { runs: [], ms: 0, scanMs: 0, hookMs: 0, items: 0, hookItems: 0, tracked: 0, reused: 0 };
   for (const r of runs) {
@@ -181,7 +197,7 @@ if (job.checks !== false && job.motion) {
     for (let f = r.from; f < r.to; f++) parts.push(hashes.get(f), sceneAt(f));
     const h = hash53(parts.join("|")), kept = base[h];
     if (kept) { motion.reused++; motion.runs.push({ from: r.from, n: r.to - r.from, h, tracked: false, ev: kept.ev, blind: kept.blind, hooked: kept.hooked }); continue; }
-    const mo = new Motion({ W: fmt.w, H: fmt.h, programs, comp, now: realNow, sceneAt });
+    const mo = new Motion({ W: fmt.w, H: fmt.h, programs, comp, now: realNow, sceneAt, drawer, installedBy });
     for (let f = r.from; f < r.to; f++) mo.frame(f, film.frame(f));
     motion.tracked++;
     for (const k of ["scanMs", "hookMs", "items", "hookItems"]) motion[k] += mo[k];

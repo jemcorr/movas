@@ -14,7 +14,7 @@ const SNAP = 10, STILL_SNAP = 4, STILL = 0.5, EVEN = 1.5, GATE = 80, KEEP = 6, S
 
 // The last KEEP samples of one element in one buffer: x at 0, y at KEEP, opacity at 2 * KEEP. Shifted in place, never reallocated.
 class Track {
-  constructor(key, owner, area) { this.key = key; this.owner = owner; this.la = area; this.n = 0; this.s = new Float64Array(3 * KEEP); }
+  constructor(key, owner, area, by) { this.key = key; this.owner = owner; this.by = by; this.la = area; this.n = 0; this.s = new Float64Array(3 * KEEP); }
   push(x, y, a, area) {
     const s = this.s;
     if (this.n === KEEP) { for (let k = 0; k < 3 * KEEP - 1; k++) s[k] = s[k + 1]; this.n--; }
@@ -30,12 +30,12 @@ class Track {
 
 /** One run of frames with no scene start inside: tracks open at its first frame and close at its end. */
 export class Motion {
-  constructor({ W, H, programs, comp, now, sceneAt }) {
-    Object.assign(this, { W, H, programs, comp, now, sceneAt });
+  constructor({ W, H, programs, comp, now, sceneAt, drawer = () => null, installedBy = {} }) {
+    Object.assign(this, { W, H, programs, comp, now, sceneAt, drawer, installedBy });
     this.open = new Map(); this.events = []; this.n = 0; this.ms = 0; this.scanMs = 0; this.hookMs = 0; this.items = 0; this.hookItems = 0;
     this.hooked = new Set(); this.blind = new Set();
     // This frame's items as parallel columns, reused from frame to frame.
-    this.ik = []; this.ix = []; this.iy = []; this.iar = []; this.ia = []; this.io = []; this.m = 0;
+    this.ik = []; this.ix = []; this.iy = []; this.iar = []; this.ia = []; this.io = []; this.ib = []; this.m = 0;
   }
   gls(list, M = I3, op = 1, out = []) {
     for (const o of list) {
@@ -45,7 +45,7 @@ export class Motion {
     }
     return out;
   }
-  add(key, x, y, area, a, owner) { const j = this.m++; this.ik[j] = key; this.ix[j] = x; this.iy[j] = y; this.iar[j] = area; this.ia[j] = a; this.io[j] = owner; }
+  add(key, x, y, area, a, owner, by) { const j = this.m++; this.ik[j] = key; this.ix[j] = x; this.iy[j] = y; this.iar[j] = area; this.ia[j] = a; this.io[j] = owner; this.ib[j] = by; }
   frame(f, list) {
     const t0 = this.now();
     this.m = 0;
@@ -55,7 +55,7 @@ export class Motion {
       const b = it.b, area = Math.max(0, b[2] - b[0]) * Math.max(0, b[3] - b[1]);
       if (it.a < 0.02 || area < 16) continue;
       const key = it.id ? `${it.k}:${it.id}` : it.k === "t" ? `t|${it.tx}|${it.ink}` : `${it.k}|${it.c ?? ""}`;
-      this.add(key, (b[0] + b[2]) / 2, (b[1] + b[3]) / 2, area, it.a, it.id ? it.id.split(".").slice(0, 2).join(".") : "-");
+      this.add(key, (b[0] + b[2]) / 2, (b[1] + b[3]) / 2, area, it.a, it.id ? it.id.split(".").slice(0, 2).join(".") : "-", this.drawer(it.sc ?? null));
       this.items++;
     }
     // A GL op is one image to the list. A program's track(params) names what moves inside it, in the op's frame space.
@@ -64,11 +64,11 @@ export class Motion {
       if (typeof prog?.track !== "function") { this.blind.add(o.program); continue; }
       this.hooked.add(o.program);
       const h0 = this.now(); const r = prog.track(o.params) ?? {}; this.hookMs += this.now() - h0;
-      const pre = `g:${o.program}:`;
+      const pre = `g:${o.program}:`, by = this.installedBy[`p:${o.program}`] ?? null;
       if (r.cut) for (const k of [...this.open.keys()]) if (k.startsWith(pre)) this.open.delete(k);
       for (const p of r.items ?? []) {
         const w = m[6] * p.x + m[7] * p.y + m[8];
-        this.add(pre + p.id, (m[0] * p.x + m[1] * p.y + m[2]) / w, (m[3] * p.x + m[4] * p.y + m[5]) / w, Math.max(16, (p.w ?? 10) * (p.h ?? 10)), a * (p.a ?? 1), o.program);
+        this.add(pre + p.id, (m[0] * p.x + m[1] * p.y + m[2]) / w, (m[3] * p.x + m[4] * p.y + m[5]) / w, Math.max(16, (p.w ?? 10) * (p.h ?? 10)), a * (p.a ?? 1), o.program, by);
         this.hookItems++;
       }
     }
@@ -85,7 +85,7 @@ export class Motion {
         // One element under this key and at most one open track. An id seen once links at any distance.
         let t = cur ? cur[0] : null;
         if (t && key.includes("|") && t.fits(this.ix[j0], this.iy[j0], this.iar[j0]) < 0) t = null;
-        if (!t) t = new Track(key, this.io[j0], this.iar[j0]);
+        if (!t) t = new Track(key, this.io[j0], this.iar[j0], this.ib[j0]);
         this.step(t, j0, f);
         if (cur && cur[0] === t) next.set(key, cur); else next.set(key, [t]);
         continue;
@@ -96,7 +96,7 @@ export class Motion {
       const got = new Map(), taken = new Set();
       for (const [, q, t] of pairs) { if (got.has(q) || taken.has(t)) continue; got.set(q, t); taken.add(t); }
       const out = [];
-      for (let q = 0; q < idx.length; q++) { const j = idx[q], t = got.get(q) ?? new Track(key, this.io[j], this.iar[j]); this.step(t, j, f); out.push(t); }
+      for (let q = 0; q < idx.length; q++) { const j = idx[q], t = got.get(q) ?? new Track(key, this.io[j], this.iar[j], this.ib[j]); this.step(t, j, f); out.push(t); }
       next.set(key, out);
     }
     this.open = next;
@@ -107,7 +107,7 @@ export class Motion {
   seen(t, q) { const x = t.s[q], y = t.s[KEEP + q]; return x >= 0 && x <= this.W && y >= 0 && y <= this.H; }
   hit(t, f, k, d, still) {
     this.n++;
-    if (this.events.length < CAP) this.events.push({ k, f: f - 2, sc: this.sceneAt(f - 2), owner: t.owner, key: t.key.slice(0, 60), d: Math.round(d * 10) / 10, ...(still ? { still: 1 } : {}) });
+    if (this.events.length < CAP) this.events.push({ k, f: f - 2, sc: this.sceneAt(f - 2), owner: t.owner, ...(t.by ? { by: t.by } : {}), key: t.key.slice(0, 60), d: Math.round(d * 10) / 10, ...(still ? { still: 1 } : {}) });
   }
   // Tests the sample two frames back, once the two after it are in. Axis x first, then y; one event per test.
   test(t, f) {
