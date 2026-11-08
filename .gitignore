@@ -3,3 +3,5 @@ vendor/
 .work/
 __pycache__/
 .DS_Store
+# Agent worktrees made by Claude Code.
+.claude/worktrees/
