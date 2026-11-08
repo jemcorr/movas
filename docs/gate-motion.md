@@ -180,3 +180,23 @@ Both are under the +0.5 s budget. The wall note is 0.01 to 0.04 s under it, and 
 - C2 visibility was not measured before the run. The flags show 5 to 6 cars at each planted frame.
 - Each C plant's `do` returned code 1 (new defects) on the plant and 0 on the reverse. This is expected.
 - Each clone's full logs (`*-do*.txt`, `*-report*.txt`), key diffs (`*-keys-*.json`, `B.jsonl`), and cost data (`K.jsonl`) are in `.work/gate-motion-2026-11-08/`. The clones are in the session scratchpad under `gmotion/` and can be wiped.
+
+## D. Agent A/B (2026-11-08)
+
+Run after A to C failed, at Eduardo's call ("Keep it, run D"). Sonnet low, n=3 per arm per note, 24 runs, one at a time, same prompt in both arms. Arm B: install at `ec7d14c` (no motion check). Arm C: install at `ad03b2b` (motion keys), with `docs/plan-motion.md` and this file removed from the install so they could not name the fixes. Harness, proofs and grader: `.work/dgate-2026-11-08/` (README.md). Grading used the motion-check install for both arms.
+
+Notes: W "Run the tile wall 3 seconds longer." (s12 trap: `% 400` scroll that wraps once the scene runs longer). K insert "Pode ser bem cedo?" after "Quero. Pode ser amanhã?" (s12 chat trap: an unrelated insert makes the scroll step 67 px in one frame). H hold on s03.b3 and T word change on s02.answer (clean).
+
+| | B snaps | C snaps | B wrong | C wrong | B done | C done |
+|---|---|---|---|---|---|---|
+| W | 3/3 | 0/3 | 0 | 1 | 3/3 | 2/3 |
+| K | 3/3 | 3/3 | 0 | 0 | 3/3 | 3/3 |
+| H | 0/3 | 0/3 | 0 | 0 | 3/3 | 3/3 |
+| T | 0/3 | 0/3 | 0 | 0 | 3/3 | 3/3 |
+
+Peak context: B mean 68.8k (65.9 to 70.7k), C mean 70.7k (68.7 to 73.6k), +2.7%. About 60k of every peak is harness overhead.
+
+- W, C: two runs read the motion keys, fixed `tiles.js` (per-tile wrap; no wrap at all) and ran `purity`. The third read "tile wall" as the s07 three.js wall and held s07 4 s instead (the wrong edit; no s12 change, so no snap counted). The note is ambiguous in a film with two walls; B never took that reading. The C-W-r3 transcript does not show whether the motion line played a part.
+- K, C: all three saw the 67 px steps, named them in the report to the director and left them unfixed. Two blamed shared tool code; the scroll lives in the film's own `film/programs/scenes/thread.js`. B runs said DONE and named nothing; B's only clue was a `clip s12.m1.2` warning that all three explained away as the "scrolling under the header" ruling.
+
+**Verdict against the pre-registered bar: FAIL.** C shipped fewer snaps overall (3 of 6 against 6 of 6) and stayed inside the token budget, but K is 3 of 3 (expected 0 or 1) and C made one more wrong edit than B (bar: no more). n=3, one film, one model setting.
