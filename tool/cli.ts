@@ -98,7 +98,8 @@ const planKey = async (film: string | null, extra: string[] = []) => {
   const trees = [film ?? FILM, `${ROOT}/film/programs`, `${HERE}/programs`, `${HERE}/runtime`, `${HERE}/tool`, `${PUBLIC}/fonts`].map((d) => { try { return hashTree(d); } catch { return "none"; } });
   let score = "nocompile";
   try { score = JSON.stringify(compile(film ?? FILM)); } catch { /* a film that does not compile fails its plan pass anyway */ }
-  const parts = [...trees, score, JSON.stringify(extra), Deno.env.get("MOVAS_SET") ?? ""];
+  // A timeout changes how long the pass may run, not what it returns.
+  const parts = [...trees, score, JSON.stringify(extra.filter((a) => !a.startsWith("--timeout="))), Deno.env.get("MOVAS_SET") ?? ""];
   return (await sha256Hex(new TextEncoder().encode(parts.join("|")))).slice(0, 32);
 };
 const keepPlan = (from: string, key: string) => {
