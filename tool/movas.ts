@@ -143,7 +143,7 @@ export const wordCount = (s: string) => plain(s).split(/\s+/).filter((w) => /[\p
 /** Verbs that take no quoted text of their own, with the keys that hold their words. An empty list means the verb has none. */
 export const WORD_KEYS: Record<string, string[]> = {
   mark: ["span"], panel: ["title"], credits: ["title", "by", "license"],
-  sfx: [], pulse: [], end: [], assert: [], claim: [], clip: [],
+  sfx: [], pulse: [], end: [], assert: [], clip: [],
 };
 
 // ---------- Formats: a pack in tool/packs that a film opts into with `use <pack>` in film/meaning.txt ----------
@@ -278,7 +278,7 @@ export const solve = (film: Film, publicDir?: string): Solved => {
     for (let idx = 0; idx < s.lines.length; idx++) {
       const l = s.lines[idx];
       if (l.verb === "sfx" || l.verb === "pulse") { sfxLines.push({ scene: sid, l, prev, idx }); continue; }
-      if (l.verb === "assert" || l.verb === "claim") continue;
+      if (l.verb === "assert") continue;
       if (l.verb === "end") {
         const p = prev;
         defs[`${sid}.end`] = () => evalAt(sid, l.at!, p, `${sid}.end`);

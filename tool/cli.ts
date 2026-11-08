@@ -39,7 +39,6 @@ const save = async (msg: string) => {
   const now = await analysisNow();
   const known = readKnown() ?? {};
   known.versions ??= {};
-  known.accepted ??= {};
   known.versions[id] = now
     ? { message: msg, defects: Object.fromEntries(now.defects), warnings: Object.fromEntries(now.warns), texts: Object.fromEntries([...now.rows].map(([k, r]) => [k, { text: r.text, sec: r.sec, px: r.px, clipped: r.clipped }])) }
     : { message: msg, defects: null, warnings: null, texts: null };
@@ -215,14 +214,6 @@ const archiveTo = async (ref: string, paths: string[], dir: string) => {
   const tar = new Deno.Command("tar", { args: ["-x", "-C", dir], stdin: "piped" }).spawn();
   const w = tar.stdin.getWriter(); await w.write(a.stdout); await w.close(); await tar.status;
 };
-/** Picture hash per frame from a plan pass: the film as compiled, or the film at another path. */
-const planHashes = async (film: string | null, tag: string): Promise<Map<number, string>> => {
-  const path = `${WORK}/plan-${PORT}-${tag}.json`;
-  const o = await render(["--planOnly", `--planOut=${path}`, "--timeout=180", ...(film ? [`--film=${film}`] : [])]);
-  if (!o.success) { console.error(new TextDecoder().decode(o.stderr).slice(-1500)); Deno.exit(1); }
-  const j = JSON.parse(Deno.readTextFileSync(path));
-  return new Map<number, string>(j.frames.map((f: number, i: number) => [f, j.hashes[i]]));
-};
 const stills = async (film: string | null, frames: number[], out: string) => {
   await Deno.mkdir(out, { recursive: true });
   const o = await render([...(film ? [`--film=${film}`] : []), `--stills=${frames.join(",")}`, `--out=${out}`, "--timeout=120", "--nochecks"]);
@@ -273,12 +264,16 @@ else if (cmd === "help") {
     const fl = s.floors.filter((x: any) => x.id.startsWith(`${id}.`));
     if (fl.length) L.push("", "Reading slack:", ...fl.map((x: any) => `${x.id} ${x.slackFrames}f`));
     // Decisions in film/direction.log that name this scene, one of its events, or all scenes.
-    L.push("", "## Decisions touching this scene");
     const hits = readDirection().filter((d) => d.appliesTo.some((a) => a === "all" || a === id || a.startsWith(`${id}.`)));
-    if (!hits.length) L.push(`None recorded for ${id}.`);
-    for (const d of hits) L.push(`${d.date} ${d.id} (applies_to ${d.appliesTo.join(",")})`, `  decision: ${d.decision}`, ...(d.words ? [`  words: ${d.words}`] : []));
-    L.push("", "A note that reverses one of these needs the director's confirmation. Say so in your report.");
-  } else L.push("", "## Decisions", `${readDirection().length} entries in ${FILM}/direction.log`);
+    if (hits.length) {
+      L.push("", "## Decisions touching this scene");
+      for (const d of hits) L.push(`${d.date} ${d.id} (applies_to ${d.appliesTo.join(",")})`, `  decision: ${d.decision}`, ...(d.words ? [`  words: ${d.words}`] : []));
+      L.push("", "A note that reverses one of these needs the director's confirmation. Say so in your report.");
+    }
+  } else {
+    const n = readDirection().length;
+    if (n) L.push("", "## Decisions", `${n} entries in ${FILM}/direction.log`);
+  }
   console.log(L.join("\n"));
 } else if (cmd === "brief") {
   // The short brief: the tool's page, then one scene's file and its decisions, or the scene list. `help` prints the long one.
@@ -288,12 +283,13 @@ else if (cmd === "help") {
     const sc = s.scenes.find((x: any) => x.id === id), f = sc ? sceneFile(id) : undefined;
     if (!sc || !f) { console.error(`no scene ${id}. Scenes: ${s.scenes.map((x: any) => x.id).join(", ")}`); Deno.exit(1); }
     parts.push(`## film/${f}\n${Deno.readTextFileSync(`${FILM}/${f}`).trim()}`);
-    const L: string[] = ["## Decisions touching this scene"];
     const hits = readDirection().filter((d) => d.appliesTo.some((a) => a === "all" || a === id || a.startsWith(`${id}.`)));
-    if (!hits.length) L.push("None recorded.");
-    for (const d of hits) L.push(`${d.date} ${d.id} applies to ${d.appliesTo.join(", ")}`, `  decision: ${d.decision.length > 240 ? `${d.decision.slice(0, 237)}...` : d.decision}`, ...(d.words && !d.decision.includes(d.words.replace(/^"|"$/g, "")) ? [`  words: ${d.words.length > 240 ? `${d.words.slice(0, 237)}...` : d.words}`] : []));
-    L.push("A note that reverses one of these needs the director's confirmation. Say so in your report.");
-    parts.push(L.join("\n"));
+    if (hits.length) {
+      const L: string[] = ["## Decisions touching this scene"];
+      for (const d of hits) L.push(`${d.date} ${d.id} applies to ${d.appliesTo.join(", ")}`, `  decision: ${d.decision.length > 240 ? `${d.decision.slice(0, 237)}...` : d.decision}`, ...(d.words && !d.decision.includes(d.words.replace(/^"|"$/g, "")) ? [`  words: ${d.words.length > 240 ? `${d.words.slice(0, 237)}...` : d.words}`] : []));
+      L.push("A note that reverses one of these needs the director's confirmation. Say so in your report.");
+      parts.push(L.join("\n"));
+    }
   } else parts.push(`Scenes: ${s.scenes.map((x: any) => `${x.id} "${x.title}" ${((x.endFrame - x.startFrame) / s.clock.fps).toFixed(1)}s`).join(", ")}`);
   console.log(parts.join("\n\n"));
 } else if (cmd === "check") {
@@ -333,11 +329,6 @@ else if (cmd === "at") {
     const on = s.texts.filter((t: any) => t.scene === sc?.id).map((t: any) => t.id);
     console.log(`frame ${f} is in ${sc?.id} "${sc?.title}"; nearest events: ${near.join(", ")}; scene texts: ${on.join(", ")}`);
   }
-} else if (cmd === "impact") {
-  await ensureHistory();
-  const ref = rest[0] ?? "HEAD", old = await scoreAt(ref);
-  console.log(impactText(impact(compile(old), compile())));
-  await Deno.remove(old.replace(/\/film$/, ""), { recursive: true });
 } else if (cmd === "look") {
   const s = compile();
   // A bare event id shows the event landed: its reading floor when it has one, otherwise 20 frames in. A number or +Nf stays exact.
@@ -391,9 +382,9 @@ else if (cmd === "at") {
   const now = analyse(compile(), planNow);
   await ensureHistory();
   const head = (await git("rev-parse", "--short=12", "--verify", "--quiet", "HEAD")).out.trim();
-  const known = readKnown(), accepted: Record<string, any> = known?.accepted ?? {};
+  const known = readKnown();
   const rec = head && known?.versions?.[head]?.defects ? known.versions[head] : null;
-  const mark = (k: string, msg: string) => (accepted[k] ? `${msg}   [accepted by ${accepted[k].accepted_by}]` : msg);
+  const mark = (_k: string, msg: string) => msg;
   const countsLine = (d: number, w: number, note = "") => `known issues: ${d} defects, ${w} warnings: ${KNOWN}${note}`;
   const listAll = (notes: string[]) => {
     const list = (m: Map<string, string>) => [...m].map(([k, msg]) => `${mark(k, msg)}   key: ${k}`);
@@ -429,18 +420,6 @@ else if (cmd === "at") {
       console.log(L.join("\n"));
     }
   }
-} else if (cmd === "accept") {
-  // A known issue is accepted by an entry in film/direction.log. The entry must exist, or the accept is refused.
-  const key = rest[0], by = (rest.find((a) => a.startsWith("--by=")) ?? "").slice("--by=".length);
-  if (!key || !by) throw new Error("usage: ./movas accept <issue key> --by=<direction log id>");
-  if (!readDirection().some((d) => d.id === by)) { console.error(`accept refused: ${by} is not an entry in film/direction.log`); Deno.exit(1); }
-  await ensureHistory();
-  const version = (await git("rev-parse", "--short=12", "--verify", "--quiet", "HEAD")).out.trim() || null;
-  const known = readKnown() ?? { versions: {} };
-  known.accepted ??= {};
-  known.accepted[key] = { accepted_by: by, version, date: new Date().toISOString().slice(0, 10) };
-  writeKnown(known);
-  console.log(`accepted: ${key} by ${by} (in ${KNOWN})`);
 } else if (cmd === "windows") {
   // Stability windows for `./movas verify`: every punch line, with land, floor and out from the compiled film, and an ROI from its groups' boxes at land plus 40 px.
   const s = compile(), c = await planFor(null, "windows", [], true);
@@ -455,46 +434,6 @@ else if (cmd === "at") {
     windows.push({ id: eid, land: land.frame, floor: floor.frame, out: end.frame, box: [Math.floor(x0), Math.floor(y0), Math.ceil(x1), Math.ceil(y1)], roi: [Math.max(0, Math.floor(x0 - M)), Math.min(fmtDef.w, Math.ceil(x1 + M)), Math.max(0, Math.floor(y0 - M)), Math.min(fmtDef.h, Math.ceil(y1 + M))] });
   }
   console.log(JSON.stringify({ durationFrames: s.durationFrames, fps: s.clock.fps, w: fmtDef.w, h: fmtDef.h, windows }, null, 1));
-} else if (cmd === "changed") {
-  // What changed on screen since a saved version, scene by scene, aligned by scene id, so a shift alone is not a change.
-  // New content: a frame whose picture the old scene never had. Moved: a picture the old scene had, at another time.
-  await ensureHistory();
-  const ref = rest[0] ?? "HEAD";
-  if (!(await git("rev-parse", "--verify", "--quiet", ref)).ok) throw new Error(`no saved version ${ref}. Run ./movas save first.`);
-  const old = await scoreAt(ref);
-  try {
-    const sNow = compile(), sOld = compile(old);
-    const hNow = await planHashes(null, "now"), hOld = await planHashes(old, "old");
-    const oldById = new Map<string, any>(sOld.scenes.map((s: any) => [s.id, s]));
-    const ranges: { scene: string; from: number; to: number }[] = [], L: string[] = [];
-    let total = 0;
-    for (const sc of [...sNow.scenes].sort((a: any, b: any) => a.startFrame - b.startFrame) as any[]) {
-      const so = oldById.get(sc.id), oldLen = so ? so.endFrame - so.startFrame : 0;
-      const oldPictures = new Set<string>();
-      for (let i = 0; i < oldLen; i++) oldPictures.add(hOld.get(so.startFrame + i)!);
-      let moved = 0; const fresh: number[] = [];
-      for (let i = 0; i < sc.endFrame - sc.startFrame; i++) {
-        const h = hNow.get(sc.startFrame + i)!;
-        if (i < oldLen && hOld.get(so.startFrame + i) === h) continue;
-        if (oldPictures.has(h)) moved++; else fresh.push(sc.startFrame + i);
-      }
-      if (!fresh.length && !moved) continue;
-      total += fresh.length;
-      const runs: { from: number; to: number }[] = [];
-      for (const f of fresh) { const r = runs[runs.length - 1]; if (r && r.to === f) r.to = f + 1; else runs.push({ from: f, to: f + 1 }); }
-      const shown = runs.slice(0, 6).map((r) => `f${r.from}-${r.to - 1}`).join(", ") + (runs.length > 6 ? ", ..." : "");
-      L.push(`${sc.id} "${sc.title}": new content ${fresh.length} frames (${shown || "none"}); moved in time ${moved} frames`);
-      // Each run is padded by 15 frames, and runs that touch within a scene are merged.
-      for (const r of runs) {
-        const from = Math.max(0, r.from - 15), to = Math.min(sNow.durationFrames, r.to + 15), last = ranges[ranges.length - 1];
-        if (last && last.scene === sc.id && last.to >= from) last.to = Math.max(last.to, to);
-        else ranges.push({ scene: sc.id, from, to });
-      }
-    }
-    Deno.writeTextFileSync(`${WORK}/changed.json`, JSON.stringify(ranges));
-    console.log(L.length ? L.join("\n") : `No scene changed since ${ref}.`);
-    console.log(`${total} frames with new content. Padded ranges: ${WORK}/changed.json`);
-  } finally { await Deno.remove(old.replace(/\/film$/, ""), { recursive: true }); }
 } else if (cmd === "compare") {
   // Same event, not same time: each version's own frame for the event id, shown side by side with the ref on the left.
   await ensureHistory();
@@ -652,4 +591,4 @@ else if (cmd === "undo") {
 } else if (cmd === "do") {
   const { doCmd } = await import("./do.ts");
   Deno.exit(await doCmd(rest, { HERE: ROOT, TOOL: HERE, FILM, WORK, PUBLIC, PORT, render, planFor, planError: () => planWhy, analyse, compile, readDirection, readKnown, git, ensureHistory, pictureNow: () => planFor(null, "pic0", [], true) }));
-} else console.log("usage: movas brief [scene] | help [scene|programs|rules] | check [--full] | report | probe | timeline | at <q> | impact [ref] | look <q>... | render | save <msg> | log | undo | diff <a> [b] | apply <patch.json> | changed [ref] | compare <ref> <event>... | rebuild <ref> <out> [--expect=sha256] | doctor [--freeze|--restore] | accept <key> --by=<id> | windows | film [--section=] [--file=] | leak | test-rules | test-ops");
+} else console.log("usage: movas brief [scene] | help [scene|programs|rules] | check [--full] | report | probe | timeline | at <q> | look <q>... | render | save <msg> | log | undo | diff <a> [b] | apply <patch.json> | compare <ref> <event>... | rebuild <ref> <out> [--expect=sha256] | doctor [--freeze|--restore] | windows | film [--section=] [--file=] | leak | test-rules | test-ops");

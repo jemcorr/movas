@@ -23,8 +23,6 @@ export type DoCtx = {
 };
 
 // Same loops as options.ts (Family T, Family L). Kept as copies so options.ts changes only by export keywords.
-const T_BEATS = [-2, -1.5, -1, -0.75, -0.5, -0.25, 0.25, 0.5, 1, 2];
-const T_SECS = [-1, -0.5, -0.25, 0.25, 0.5, 1];
 const L_DY = [0, -10, -25, -45];
 
 const KEY_RE = /^([A-Za-z][A-Za-z0-9]*)=(.*)$/;
