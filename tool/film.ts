@@ -413,7 +413,8 @@ export const buildReport = (o: { s: any; checks: any; rows: Map<number, Item[]>;
       const b = au.sfxBuried ?? []; if (b.length) L.push(`Buried cues, rise under 3 dB, first of ${b.length}: ${b.slice(0, 6).map((q: any) => `f${q.frame} ${String(q.file ?? q.cls).split("/").pop()} ${q.rise}`).join(", ")}.`);
     } else L.push("No encoded file was given, so only the score side is listed.");
   }
-  if (want("ledger")) {
+  // The chat ledger belongs to the chat format: a film without `use chat` gets no ledger section.
+  if (want("ledger") && meaning.packs.includes("chat")) {
     L.push("", "## Claims and evidence [score]");
     L.push("Each label or story claim beside the lines it rests on. Whether a claim is plausible is a judgment for a model and the director. This section does not make it. A rule in the film's own folder can.");
     L.push(...(ledger.length ? ledger : ["No lines in a panel in this film."]));
