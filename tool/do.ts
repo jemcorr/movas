@@ -128,7 +128,7 @@ type Run = {
   path: string; // absolute path of the scene file
   idx: number; // index of the edited line in files.get(path)
   notes: string[];
-  also: string[]; // repeat edits, file:line relative to HERE
+  also: string[]; // repeat edits, file:line relative to the film folder (install files relative to the install)
   timeChange?: { from: string; to: string };
   alt?: { cmd: string; cost: Cost };
   split?: { text: string; margin: number | null; rejected?: { text: string; margin: number | null } };
@@ -154,7 +154,8 @@ const costOf = (before: Solved, s: Solved): Cost => {
 };
 const signed = (n: number) => `${n >= 0 ? "+" : ""}${n}`;
 const fmt = (x: number) => String(Number(x.toFixed(4)));
-const rel = (ctx: DoCtx, p: string) => p.replace(`${ctx.HERE}/`, "").replace(`${ctx.TOOL ?? ctx.HERE}/`, "");
+/** A path for a reader: relative to the film folder, or to the install for the install's own files. Anything else stays absolute. */
+const rel = (ctx: DoCtx, p: string) => { for (const root of [ctx.HERE, ctx.TOOL ?? ctx.HERE]) if (p.startsWith(`${root}/`)) return p.slice(root.length + 1); return p; };
 /** The compiler's unit conversions, as options.ts has them. */
 const toBeats = (c: Clock, v: number, unit?: string) =>
   unit === "bar" ? v * c.beatsPerBar : unit === "s" ? (v * c.fps) / c.fpb : unit === "f" ? v / c.fpb : v;
