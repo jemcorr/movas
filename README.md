@@ -7,7 +7,7 @@ The objective: a director's note to an existing cut should cost an agent a fract
 ## What is in this folder
 
 - `movas`: the launcher. It runs the film in the current folder, or the folder `MOVAS_FILM` names.
-- `tool/`: the compiler, the CLI, the checks and the rule language. `tool/brief.md` is the page an agent reads first.
+- `tool/`: the compiler, the CLI, the checks and the rule language. `tool/brief_short.md` is the page an agent reads first (`./movas brief`); `tool/syntax.md` is the score syntax (`./movas help`).
 - `runtime/`: the page, the compositor and the renderer.
 - `programs/`: the generic programs: blocking, the chat format, shared helpers.
 - `fixtures/`: two small films that the rule tests run on.

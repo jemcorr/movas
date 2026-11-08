@@ -255,7 +255,7 @@ else if (cmd === "help" && rest[0] === "programs") {
 else if (cmd === "help") {
   const s = compile();
   const rulesText = (() => { try { return Deno.readTextFileSync(`${FILM}/rules.movas`); } catch { return ""; } })();
-  const L: string[] = [Deno.readTextFileSync(`${HERE}/tool/brief.md`).trim(), ...packPages(s).flatMap((x: string) => ["", x]), "", "## Rules", rulesText.split("\n").filter((l) => l.startsWith("rule")).join("\n") || "None.", "", "## Timeline", timelineMd(s)];
+  const L: string[] = [Deno.readTextFileSync(`${HERE}/tool/syntax.md`).trim(), ...packPages(s).flatMap((x: string) => ["", x]), "", "## Rules", rulesText.split("\n").filter((l) => l.startsWith("rule")).join("\n") || "None.", "", "## Timeline", timelineMd(s)];
   const open = s.problems.map((p: any) => `${p.level} ${p.code} ${p.msg}`);
   if (open.length) L.push("", "## Open problems", ...open);
   const id = rest[0];
@@ -279,7 +279,7 @@ else if (cmd === "help") {
   }
   console.log(L.join("\n"));
 } else if (cmd === "brief") {
-  // The short brief: the tool's page, then one scene's file and its decisions, or the scene list. `help` prints the long one.
+  // The short brief: the tool's page, then one scene's file and its decisions, or the scene list. `help` prints the score syntax.
   const s = compile(), parts = [Deno.readTextFileSync(`${HERE}/tool/brief_short.md`).trim(), ...packPages(s)];
   const id = rest[0];
   if (id) {
