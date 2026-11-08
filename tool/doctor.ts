@@ -2,7 +2,6 @@
 //   doctor            verify; one line per problem, each with its fix; exit 1 on a problem
 //   doctor --freeze   write the lock from the files as they are now, and clone them into the store
 //   doctor --restore  put back what is missing or changed, from the store
-// MOVAS_RUNTIME_ROOT maps every locked path under a directory, so a test can run the whole check on a copy.
 import { HashCache, cloneFile } from "./ops.ts";
 import { loadFilm } from "./movas.ts";
 
@@ -10,7 +9,6 @@ const ROOT = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 const FILM_ROOT = Deno.env.get("MOVAS_FILM") ?? ROOT;
 const WORK = Deno.env.get("MOVAS_WORK") ?? `${FILM_ROOT}/.work`;
 const PUBLIC = Deno.env.get("MOVAS_PUBLIC") ?? "";
-const RT = Deno.env.get("MOVAS_RUNTIME_ROOT") ?? "";
 const LOCK = `${FILM_ROOT}/runtime.lock.json`, STORE = `${WORK}/store`;
 // The whole build folder: three.module.js imports ./three.core.js from it, so the module alone does not load.
 const THREE_ROOT = Deno.env.get("MOVAS_THREE") ?? "";
@@ -18,7 +16,7 @@ const THREE = THREE_ROOT ? `${THREE_ROOT}/build` : "";
 const FIX = "./movas doctor --restore";
 
 type Locked = { role: string; path: string; kind: "file"; sha256: string } | { role: string; path: string; kind: "folder"; files: Record<string, string> };
-const real = (p: string) => `${RT}${p}`;
+const real = (p: string) => p;
 const decode = (b: Uint8Array) => new TextDecoder().decode(b).trim();
 
 /** Finder writes .DS_Store into folders it shows, so it is never part of a locked folder. */

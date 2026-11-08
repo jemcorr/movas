@@ -13,7 +13,7 @@ async function decode(file: string, cacheDir: string): Promise<Float32Array> {
   await Deno.mkdir(cacheDir, { recursive: true }); await Deno.writeFile(cached, raw);
   const copy = new Uint8Array(raw); return new Float32Array(copy.buffer, 0, copy.byteLength / 4);
 }
-export type MixOpts = { root: string; cache: string; music: any; sfxGain: number; duckFloor: number; release: number; capFrames: number; gains?: Record<string, number>; bedDelay?: number };
+export type MixOpts = { root: string; cache: string; music: any; sfxGain: number; duckFloor: number; release: number; capFrames: number; gains?: Record<string, number> };
 /** Returns stems and their sum as interleaved float32 stereo. A changed row costs only its own addition. */
 export async function mix(solved: any, o: MixOpts) {
   const fps = solved.clock.fps ?? 30, spf = SR / fps, n = solved.durationFrames, L = Math.round(n * spf);
@@ -24,12 +24,12 @@ export async function mix(solved: any, o: MixOpts) {
   const duck = new Float64Array(n); for (const h of solved.ducks) for (let f = Math.max(0, h - 1); f < Math.min(n, h + o.release * 5); f++) { const t = f - h; duck[f] = Math.max(duck[f], t < 1 ? 1 : Math.exp(-(t - 1) / o.release)); }
   for (const sp of solved.duckSpans ?? []) for (let f = Math.max(0, sp.from - 3); f < Math.min(n, sp.to + o.release); f++) duck[f] = 1;
   const trim = Math.round(solved.trimBeats * (spf * (solved.clock.fpb ?? 15)));
-  const delay = o.bedDelay ?? 0, B = stems.bed;
+  const B = stems.bed;
   for (let f = 0; f < n; f++) {
     const fade = Math.min(1, fin ? f / fin : 1) * Math.min(1, fout ? (n - 1 - f) / (fout - 1) : 1);
     const g = (o.music?.gain ?? 1) * fade * (1 - (1 - o.duckFloor) * duck[f]);
     const a = Math.round(f * spf), z = Math.round((f + 1) * spf);
-    for (let s = a; s < z; s++) { const j = (s - delay + trim) * 2; if (j >= 0 && j + 1 < bed.length) { B[s * 2] = bed[j] * g; B[s * 2 + 1] = bed[j + 1] * g; } }
+    for (let s = a; s < z; s++) { const j = (s + trim) * 2; if (j >= 0 && j + 1 < bed.length) { B[s * 2] = bed[j] * g; B[s * 2 + 1] = bed[j + 1] * g; } }
   }
   // Rows.
   const capS = Math.round(o.capFrames * spf);

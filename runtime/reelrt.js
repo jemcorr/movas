@@ -409,7 +409,7 @@ export class Compositor {
     const gl = this.gl; this.bind(this.main); gl.clearColor(0, 0, 0, 1); gl.depthMask(true); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     this.blendNormal(); this.run(list);
   }
-  /** Same result as readYUV, split in two so the GPU can run ahead: start now, collect a few frames later, in order. */
+  /** The composed frame as planar YUV 4:2:0, top row first, in two steps so the GPU can run ahead: start now, collect a few frames later, in order. */
   startRead() {
     const gl = this.gl, W = this.tw, H = this.th, cw = W >> 1, ch = H >> 1; gl.disable(gl.BLEND);
     const pass = (dst, prog, set) => { this.bind(dst); this.use(prog, [0, 0, this.W, this.H], I3, I3, null); gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, this.main.t); gl.uniform1i(prog.u.uT, 0); set?.(prog.u); gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4); };
@@ -432,20 +432,6 @@ export class Compositor {
     for (;;) { const st = gl.clientWaitSync(e.sync, gl.SYNC_FLUSH_COMMANDS_BIT, 0); if (st === gl.ALREADY_SIGNALED || st === gl.CONDITION_SATISFIED) break; if (st === gl.WAIT_FAILED) throw new Error("fence failed"); await yieldTask(); }
     gl.deleteSync(e.sync); gl.bindBuffer(gl.PIXEL_PACK_BUFFER, e.pbo); gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, dst); gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
     this.pbos.push(e); return dst;
-  }
-  /** The composed frame as planar YUV 4:2:0, top row first, ready for a rawvideo pipe, in dst (a Uint8Array of this.pack's size). */
-  readYUV(dst = this.pack) {
-    const gl = this.gl, W = this.tw, H = this.th, cw = W >> 1, ch = H >> 1; gl.disable(gl.BLEND);
-    const pass = (dst, prog, set) => { this.bind(dst); this.use(prog, [0, 0, this.W, this.H], I3, I3, null); gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, this.main.t); gl.uniform1i(prog.u.uT, 0); set?.(prog.u); gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4); };
-    pass(this.yT, this.p.y);
-    pass(this.uT, this.p.c, (u) => { gl.uniform2f(u.uPx, 1 / W, 1 / H); gl.uniform1f(u.uWhich, 0); });
-    pass(this.vT, this.p.c, (u) => { gl.uniform2f(u.uPx, 1 / W, 1 / H); gl.uniform1f(u.uWhich, 1); });
-    gl.pixelStorei(gl.PACK_ALIGNMENT, 1);
-    gl.bindFramebuffer(gl.FRAMEBUFFER, this.yT.f); gl.readPixels(0, 0, W, H, gl.RED, gl.UNSIGNED_BYTE, dst, 0);
-    gl.bindFramebuffer(gl.FRAMEBUFFER, this.uT.f); gl.readPixels(0, 0, cw, ch, gl.RED, gl.UNSIGNED_BYTE, dst, W * H);
-    gl.bindFramebuffer(gl.FRAMEBUFFER, this.vT.f); gl.readPixels(0, 0, cw, ch, gl.RED, gl.UNSIGNED_BYTE, dst, W * H + cw * ch);
-    this.blendNormal();
-    return dst;
   }
 }
 

@@ -2,18 +2,16 @@
 // draws only frames whose chunk is not cached, encodes closed-GOP chunks, and concatenates. No npm, no Remotion.
 // Deno flags make the suite's own network rule real: only 127.0.0.1 is reachable.
 //   deno run --allow-net=127.0.0.1 --allow-read --allow-write=<work> --allow-run=ffmpeg,ffprobe,<shell> --allow-env runtime/render.ts ...
-import { compilerKeys, hashTree, loadFilm, solve } from "../tool/movas.ts";
+import { compilerKeys, loadFilm, solve } from "../tool/movas.ts";
 import { HashCache, unreadKeys } from "../tool/ops.ts";
 import { joinChunks } from "./concat.ts";
 
 const args = Object.fromEntries(Deno.args.filter((a) => a.startsWith("--")).map((a) => { const m = /^--([^=]+)(?:=(.*))?$/.exec(a)!; return [m[1], m[2] ?? "1"]; }));
-if ("like-master" in args) { console.error("--like-master is gone: the bed starts on its score cue, with no extra delay. Remove the flag."); Deno.exit(2); }
 const HERE = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 // The film's root: its score in film/, its own programs in film/programs. The launcher sets MOVAS_FILM.
 const ROOT = Deno.env.get("MOVAS_FILM") ?? HERE;
 const PUBLIC = args.public ?? Deno.env.get("MOVAS_PUBLIC") ?? "";
 if (!PUBLIC) { console.error("MOVAS_PUBLIC is not set. Add MOVAS_PUBLIC=<folder holding fonts/ and sfx/> to .movasrc."); Deno.exit(2); }
-const RT = Deno.env.get("MOVAS_RUNTIME_ROOT") ?? ""; // Serves fonts, assets and three from a runtime root when one is set (tests and restores).
 const SHELL = args.shell ?? Deno.env.get("MOVAS_SHELL") ?? "";
 if (!SHELL) { console.error("MOVAS_SHELL is not set. Add MOVAS_SHELL=<path of the headless shell binary> to .movasrc."); Deno.exit(2); }
 const THREE = Deno.env.get("MOVAS_THREE") ?? ""; // The three.js package folder. Only a film that imports three needs it.
@@ -22,8 +20,8 @@ const PORT = parseInt(args.port ?? "3517"), DBG = parseInt(args.dbg ?? "9334");
 const filmDir = args.film ? (args.film.startsWith("/") ? args.film : `${Deno.cwd()}/${args.film}`) : `${ROOT}/film`;
 const preview = "preview" in args, scale = parseFloat(args.scale ?? (preview ? "0.5" : "1"));
 const preset = args.preset ?? (preview ? "veryfast" : "medium"), crf = args.crf ?? (preview ? "24" : "16"), threads = args.threads ?? "3", maxEnc = parseInt(args.encoders ?? "6");
-// --feed=async (default; --feed=sync for the old path): queue each frame on its chunk's ffmpeg stdin and ack at once, with at most --feedq frames (default 60, ~187 MB at 1080x1920) not yet written.
-const ASYNCFEED = (args.feed ?? "async") === "async", FEEDQ = parseInt(args.feedq ?? "60"), inq: Promise<void>[] = [];
+// Each frame is queued on its chunk's ffmpeg stdin and acked at once, with at most --feedq frames (default 60, ~187 MB at 1080x1920) not yet written.
+const FEEDQ = parseInt(args.feedq ?? "60"), inq: Promise<void>[] = [];
 const CHUNK = parseInt(args.chunk ?? "30"), outPath = args.out ?? `${WORK}/out/${preview ? "preview" : "master"}.mp4`;
 const t = { start: performance.now() } as Record<string, number>;
 const lap = (k: string) => { t[k] = performance.now() - t.start; };
@@ -78,7 +76,7 @@ const early: { path: string; ws: WebSocket; msgs: MessageEvent[] }[] = [];
 const CSP = "default-src 'self' 'unsafe-inline' 'unsafe-eval' blob: data:; connect-src 'self' ws://127.0.0.1:*";
 // A program URL resolves to the film's own programs first, then to the tool's. The film's programs are always the root's: a temp copy of the score has no programs.
 const programFile = (p: string) => { const own = `${ROOT}/film${p}`; try { Deno.statSync(own); return own; } catch { return `${HERE}${p}`; } };
-const files = (p: string) => p.startsWith("/frames/") ? `${WORK}${p}` : p.startsWith("/runtime/") ? `${HERE}${p}` : p.startsWith("/programs/") ? programFile(p) : p.startsWith("/fonts/") || p.startsWith("/assets/") ? `${RT}${PUBLIC}${p.replace("/assets", "")}` : p.startsWith("/three/") ? (THREE ? `${RT}${THREE}${p.slice(6)}` : null) : null;
+const files = (p: string) => p.startsWith("/frames/") ? `${WORK}${p}` : p.startsWith("/runtime/") ? `${HERE}${p}` : p.startsWith("/programs/") ? programFile(p) : p.startsWith("/fonts/") || p.startsWith("/assets/") ? `${PUBLIC}${p.replace("/assets", "")}` : p.startsWith("/three/") ? (THREE ? `${THREE}${p.slice(6)}` : null) : null;
 const server = Deno.serve({ port: PORT, hostname: "127.0.0.1", onListen() {} }, async (req) => {
   const u = new URL(req.url);
   if (u.pathname in sockets) {
@@ -114,7 +112,7 @@ const startAudio = async () => {
   if (!hasAudio) return { ms: 0, hit: false, samples: 0 };
   const a0 = performance.now();
   const f32 = `${WORK}/mix.f32`;
-  const mixOpts = { root: PUBLIC, cache: `${WORK}/clips`, music: film.music, sfxGain: parseFloat(args.sfxgain ?? String(film.sfxGain)), duckFloor: film.duck?.gain ?? 0.6, release: 8, capFrames: 90, bedDelay: parseFloat(args.beddelay ?? "0") };
+  const mixOpts = { root: PUBLIC, cache: `${WORK}/clips`, music: film.music, sfxGain: parseFloat(args.sfxgain ?? String(film.sfxGain)), duckFloor: film.duck?.gain ?? 0.6, release: 8, capFrames: 90 };
   const sized = await Promise.all([...new Set([...solved.sfx.map((r: any) => r.file), film.music?.file].filter(Boolean))].sort().map(async (f) => `${f}:${(await Deno.stat(`${PUBLIC}/${f}`)).size}`));
   const audioKey = (await sha(new TextEncoder().encode(JSON.stringify({ sfx: solved.sfx, ducks: solved.ducks, duckSpans: solved.duckSpans ?? [], clock: solved.clock, trim: solved.trimBeats, n: solved.durationFrames, o: { ...mixOpts, root: "", cache: "" }, preview, sized, mix: await sha(await Deno.readFile(`${HERE}/runtime/mix.ts`)) })))).slice(0, 24);
   const keptAudio = `${WORK}/audio-cache/${audioKey}.m4a`;
@@ -159,10 +157,6 @@ const mediaFiles = [...new Set([...solved.media.filter((m: any) => m.verb === "c
 const mediaKey = (await sha(new TextEncoder().encode((await Promise.all(mediaFiles.map((f) => contentOf(`${PUBLIC}/${f}`)))).join(",")))).slice(0, 16);
 hc.save();
 const keyBase = (await sha(new TextEncoder().encode(`${encKey}|${fontKey}|${mediaKey}`))).slice(0, 16);
-// Version id: a hash of every file the render reads, from the score, the programs, the runtime and the compiler. It goes into the mp4 comment.
-// Thread count is not part of it: it changes the x264 bytes, so the manifest records it instead.
-const versionTree = { film: hashTree(filmDir), programs: hashTree(`${HERE}/programs`), runtime: hashTree(`${HERE}/runtime`), tool: hashTree(`${HERE}/tool`) };
-const versionId = (await sha(new TextEncoder().encode(JSON.stringify(versionTree)))).slice(0, 16);
 
 // Every program directory with an install.js and every scene module joins the film unless --modules names a subset.
 const moduleSet = new Set<string>();
@@ -211,7 +205,7 @@ const result = await new Promise<any>((resolve, reject) => {
     chain = chain.then(async () => {
       if (!cur) await open();
       if ("pixhash" in args) pixHashes.push((await sha(buf)).slice(0, 16));
-      if (ASYNCFEED) { while (inq.length >= FEEDQ) await inq.shift(); const wp = cur!.writer.write(buf); wp.catch(reject); inq.push(wp); } else await cur!.writer.write(buf);
+      while (inq.length >= FEEDQ) await inq.shift(); const wp = cur!.writer.write(buf); wp.catch(reject); inq.push(wp);
       frameCount++;
       fi++; if (fi >= chunks[ci].frames.length) { close(); fi = 0; ci++; }
       ctl!.send('{"t":"ack"}');
@@ -230,7 +224,7 @@ const result = await new Promise<any>((resolve, reject) => {
       const m = JSON.parse(e.data);
       if (m.t === "hello") {
         lap("hello");
-        ws.send(JSON.stringify({ t: "job", solved, format, formatId, scale, segments, salt: 0, checks: !("nochecks" in args) && !stills, programHash, scan: !!args.scanOut, window: parseInt(args.window ?? "12"), ring: parseInt(args.ring ?? "6"), modules: args.modules !== undefined ? args.modules.split(",").filter(Boolean) : autoModules })); audioStart();
+        ws.send(JSON.stringify({ t: "job", solved, format, formatId, scale, segments, checks: !("nochecks" in args) && !stills, programHash, scan: !!args.scanOut, window: parseInt(args.window ?? "12"), modules: args.modules !== undefined ? args.modules.split(",").filter(Boolean) : autoModules })); audioStart();
       } else if (m.t === "gl") report.gl = m;
       else if (m.t === "blocked") blocked.push(m.msg);
       else if (m.t === "error") reject(new Error([m.msg, ...new Set(blocked)].join("\n")));
@@ -239,9 +233,9 @@ const result = await new Promise<any>((resolve, reject) => {
         if (blocked.length) { reject(new Error(`render stopped, network blocked: ${blocked.join("; ")}`)); return; }
         lap("plan"); plan = m; report.planMs = m.planMs;
         m.checks.deadKeys = unreadKeys(solved.film, m.kvReads ?? {}, m.kvEnum ?? [], compilerKeys());
-        if (args.planOut) Deno.writeTextFileSync(args.planOut, JSON.stringify({ frames: m.frames, hashes: m.hashes, irLengths: m.irLengths, planMs: m.planMs }));
+        if (args.planOut) Deno.writeTextFileSync(args.planOut, JSON.stringify({ frames: m.frames, hashes: m.hashes, planMs: m.planMs }));
         if ("planOnly" in args && args.checksOut) Deno.writeTextFileSync(args.checksOut, JSON.stringify(m.checks));
-        if ("planOnly" in args) { console.log(JSON.stringify({ frames: m.frames.length, irBytes: m.irLengths.reduce((a: number, b: number) => a + b, 0), planMs: m.planMs })); traceOut("plan", { planMs: Math.round(m.planMs) }); try { shell.kill("SIGKILL"); } catch { /* gone */ } Deno.exit(0); }
+        if ("planOnly" in args) { console.log(JSON.stringify({ frames: m.frames.length, planMs: m.planMs })); traceOut("plan", { planMs: Math.round(m.planMs) }); try { shell.kill("SIGKILL"); } catch { /* gone */ } Deno.exit(0); }
         const byFrame = new Map<number, string>(m.frames.map((f: number, i: number) => [f, m.hashes[i]]));
         const need: any[] = [], all: any[] = [], seen = new Set<string>();
         (async () => {
@@ -299,18 +293,16 @@ await Deno.mkdir(outPath.replace(/\/[^/]*$/, ""), { recursive: true });
 // The chunks join in this process: concat.ts writes the packets the concat demuxer would, which costs that demuxer about 10 ms a file
 // (it decodes a frame to probe each one). One ffmpeg call then muxes the audio and moves the index to the front, as before.
 // Any chunk the joiner does not expect falls back to the demuxer.
-const firstLine = async (cmd: string, a: string[]) => new TextDecoder().decode((await new Deno.Command(cmd, { args: a, stdout: "piped", stderr: "null" }).output()).stdout).split("\n")[0].trim();
-const versions = Promise.all([firstLine(SHELL, ["--version"]), firstLine("ffmpeg", ["-version"])]);
 const joinedPath = `${WORK}/joined.mp4`;
-let inputs: string[], outOpts: string[] = [], chunkBytes: Uint8Array<ArrayBuffer>[] | null = null;
-try { const j = await joinChunks(report.all.map((c: any) => c.path), joinedPath); inputs = ["-i", joinedPath]; outOpts = ["-b:v", String(j.firstBitRate)]; chunkBytes = j.files; }
+let inputs: string[], outOpts: string[] = [];
+try { const j = await joinChunks(report.all.map((c: any) => c.path), joinedPath); inputs = ["-i", joinedPath]; outOpts = ["-b:v", String(j.firstBitRate)]; }
 catch (e) {
   console.error(`note concat.fallback ${(e as Error).message}`);
   const list = `${WORK}/concat.txt`;
   await Deno.writeTextFile(list, report.all.map((c: any) => `file '${c.path}'`).join("\n") + "\n");
   inputs = ["-f", "concat", "-safe", "0", "-i", list];
 }
-const c = await new Deno.Command("ffmpeg", { args: ["-v", "error", "-nostdin", "-y", ...inputs, ...(hasAudio ? ["-i", audioOut] : []), "-c", "copy", ...outOpts, "-movflags", "+faststart", "-metadata", `comment=movas:${versionId}`, outPath], stderr: "piped" }).output();
+const c = await new Deno.Command("ffmpeg", { args: ["-v", "error", "-nostdin", "-y", ...inputs, ...(hasAudio ? ["-i", audioOut] : []), "-c", "copy", ...outOpts, "-movflags", "+faststart", outPath], stderr: "piped" }).output();
 if (!c.success) throw new Error(new TextDecoder().decode(c.stderr));
 if (outOpts.length) Deno.remove(joinedPath).catch(() => {});
 lap("concat");
@@ -336,12 +328,7 @@ const conform = async () => {
   for (const [k, w] of [["color_primaries", "bt709"], ["color_transfer", "bt709"], ["color_space", "bt709"], ["color_range", "tv"]]) if (v[k] !== w) problems.push(`${k} is ${v[k]}, expected ${w}`);
   return { ok: problems.length === 0, problems, read: { w: v.width, h: v.height, fps, frames: parseInt(v.nb_read_packets), videoSec: vDur, audioSec: a ? parseFloat(a.duration) : null } };
 };
-// The read-back, the output's hash and the chunk hashes run at once: each reads its own file.
-const [conformance, outSha, chunkShas, [shellVersion, ffmpegVersion]] = await Promise.all([
-  conform(), (async () => sha(await Deno.readFile(outPath)))(),
-  Promise.all(report.all.map(async (c: any, i: number) => sha(chunkBytes?.[i] ?? await Deno.readFile(c.path)))), versions,
-]);
-chunkBytes = null;
+const conformance = await conform();
 lap("conform");
 const summary = {
   out: outPath, bytes: stat.size, renderer: report.gl?.renderer, frames: report.framesTotal, framesDrawn: report.framesDrawn, drawnRanges: report.drawnRanges, chunks: report.chunks, chunksDrawn: report.chunksDrawn,
@@ -350,14 +337,14 @@ const summary = {
   problems: solved.problems.length, conformance,
   checks: { texts: checks.texts?.length, belowMin: (checks.texts ?? []).filter((x: any) => x.minPx < parseFloat(film.rules?.find((r: any) => r.id === "min.text")?.kv.px ?? "NaN")).length, collisions: checks.collisions?.length, occluded: Object.keys(checks.occluded ?? {}).length, offFrame: Object.keys(checks.offFrame ?? {}).length, deadKeys: checks.deadKeys?.length },
 };
-// Manifest beside the file: what made it, so a rebuild can check its bytes against this record.
+// Manifest beside the file: what made it. verify reads version.shadowHead; purity reads chunks.
 const manifest = {
-  out: outPath, bytes: stat.size, sha256: outSha, comment: `movas:${versionId}`,
-  version: { id: versionId, trees: versionTree, shadowHead: args.shadow || null, dirty: args.dirty === undefined ? null : args.dirty === "1" },
-  shell: { path: SHELL, version: shellVersion }, gl: report.gl ?? null, ffmpeg: ffmpegVersion,
+  out: outPath, bytes: stat.size,
+  version: { shadowHead: args.shadow || null, dirty: args.dirty === undefined ? null : args.dirty === "1" },
+  shell: { path: SHELL }, gl: report.gl ?? null,
   encoder: { format: formatId, w: tw, h: th, fps: film.fps, scale, preset, crf, threads, chunk: CHUNK, pixFmt: "yuv420p", encKey, keyBase, audio: hasAudio ? "aac_at" : "none", audioBitrate: preview ? "128k" : "320k" },
   range: args.range ?? null, nocache: "nocache" in args, frames: report.framesTotal, framesDrawn: report.framesDrawn,
-  chunks: report.all.map((c: any, i: number) => ({ id: c.id, from: c.frames[0], frames: c.frames.length, sha256: chunkShas[i] })),
+  chunks: report.all.map((c: any) => ({ id: c.id, from: c.frames[0], frames: c.frames.length })),
 };
 await Deno.writeTextFile(`${outPath}.manifest.json`, JSON.stringify(manifest, null, 1));
 if ("pixhash" in args) await Deno.writeTextFile(args.pixhash === "1" ? `${WORK}/pixhash.json` : args.pixhash, JSON.stringify(report.pixHashes));

@@ -42,7 +42,6 @@ const ban = (name) => () => { throw new Error(`${name} is not available to scene
 const realNow = performance.now.bind(performance);
 Math.random = ban("Math.random"); Date.now = ban("Date.now");
 
-const irLengths = new Map();
 const hash53 = (str, seed = 0) => { let h1 = 0xdeadbeef ^ seed, h2 = 0x41c6ce57 ^ seed; for (let i = 0; i < str.length; i++) { const c = str.charCodeAt(i); h1 = Math.imul(h1 ^ c, 2654435761); h2 = Math.imul(h2 ^ c, 1597334677); } h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909); h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909); return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36); };
 const rx = []; let wake = null;
 ws.onmessage = (e) => { rx.push(typeof e.data === "string" ? JSON.parse(e.data) : e.data); wake?.(); wake = null; };
@@ -91,7 +90,6 @@ const drawn = new Map();
 // Punch-group boxes in the frame where each punch lands, for the stability windows of `./movas windows`.
 const landOf = new Map(); for (const [id, e] of Object.entries(S.events ?? {})) if (id.endsWith(".land")) landOf.set(id.slice(0, -5), e.frame);
 const landBoxes = {};
-const htmlBoxes = {}; // First frame each word group inside an HTML bake shows, with its box and words: what the bake test reads.
 // Every text op a frame draws, decor and id-less ones included. flatten() leaves those out, so the unregistered-text check reads them here.
 const textOps = (list, op = 1, scene = null, out = []) => {
   for (const o of list) {
@@ -116,8 +114,7 @@ for (const f of frames) {
   const list = film.frame(f);
   const j = JSON.stringify(list);
   let salt = ""; for (const k in job.programHash) if (j.includes(`"program":"${k}"`)) salt += job.programHash[k];
-  hashes.set(f, hash53(j + salt, job.salt ?? 0));
-  irLengths.set(f, j.length);
+  hashes.set(f, hash53(j + salt));
   if (job.checks !== false) {
     if (drawsSomething(list)) { if (emptyFrom !== null && f - emptyFrom >= DEAD_MIN) deadAir.push({ first: emptyFrom, n: f - emptyFrom }); emptyFrom = null; } else if (emptyFrom === null) emptyFrom = f;
     for (const t of textOps(list)) {
@@ -128,7 +125,6 @@ for (const f of frames) {
     }
     const items = flatten(list, comp);
     for (const it of items) if (it.k === "text" && /\.g\d+$/.test(it.id)) { const eid = it.id.replace(/\.g\d+$/, ""); if (landOf.get(eid) === f) landBoxes[it.id] = { frame: f, box: it.box.map((v) => Math.round(v * 100) / 100) }; }
-    for (const it of items) if (it.html && !htmlBoxes[it.id]) htmlBoxes[it.id] = { frame: f, text: it.text, px: it.px, vis: it.vis, box: it.box.map((v) => Math.round(v * 100) / 100) };
     const texts = [];
     items.forEach((it, idx) => {
       if (it.k !== "text" || it.a < 0.5 || it.vis < 0.05) return;
@@ -163,7 +159,7 @@ const planMs = realNow() - t0;
 if (job.scan) { let batch = []; for (const f of frames) { batch.push([f, scanFrame(film.frame(f), comp)]); if (batch.length >= 120) { say({ t: "scan", rows: batch }); batch = []; await settle(); } } if (batch.length) say({ t: "scan", rows: batch }); }
 const list = frames.map((f) => hashes.get(f));
 await settle();
-say({ t: "plan", kvReads: Object.fromEntries(Object.entries(kvReads).map(([k, s]) => [k, [...s]])), kvEnum: [...kvEnum], planMs, frames, irLengths: frames.map((f) => irLengths.get(f)), hashes: list, checks: { texts: Object.values(textStats), collisions: [...pairs.values()], occluded: occl, offFrame: Object.fromEntries(Object.entries(offFrame).map(([k, v]) => [k, { n: v.length, first: v[0] }])), drawn: [...drawn.values()], landBoxes, htmlBoxes, deadAir }, bakes: comp.bakes });
+say({ t: "plan", kvReads: Object.fromEntries(Object.entries(kvReads).map(([k, s]) => [k, [...s]])), kvEnum: [...kvEnum], planMs, frames, hashes: list, checks: { texts: Object.values(textStats), collisions: [...pairs.values()], occluded: occl, offFrame: Object.fromEntries(Object.entries(offFrame).map(([k, v]) => [k, { n: v.length, first: v[0] }])), drawn: [...drawn.values()], landBoxes, deadAir }, bakes: comp.bakes });
 
 // ---------- Draw only what is missing. ----------
 const need = await next();
@@ -173,18 +169,12 @@ const yieldTask = () => new Promise((r) => { mcWake = r; mc.port2.postMessage(0)
 // Each frame is read into a buffer of its own, which moves to the sender and comes back once sent.
 const frameBuf = () => spare.pop() ?? new Uint8Array(comp.pack.length);
 const emit = async (px, a0) => { sender.postMessage(px.buffer, [px.buffer]); const s0 = realNow(); sendMs += s0 - a0; if (++inflight >= WINDOW) { const ack = await next(); if (ack.t !== "ack") throw new Error("protocol"); inflight--; waitMs += realNow() - s0; } };
-const ring = []; const RING = job.ring ?? 0;
+const ring = []; const RING = 6;
 for (const c of need.chunks) {
   for (const f of c.frames) {
     const a = realNow(); const dl = film.frame(f); await comp.preload(dl); comp.frame(dl); const b = realNow();
-    if (RING) {
-      ring.push(comp.startRead()); readMs += realNow() - b; drawMs += b - a;
-      if (ring.length > RING) { const r0 = realNow(); const px = await comp.finishRead(ring.shift(), yieldTask, frameBuf()); const r1 = realNow(); readMs += r1 - r0; await emit(px, r1); }
-    } else {
-      const px = comp.readYUV(frameBuf()); const d = realNow(); drawMs += b - a; readMs += d - b;
-      // A window of frames in flight, so readback, transport and encoding overlap instead of running in lockstep.
-      await emit(px, d);
-    }
+    ring.push(comp.startRead()); readMs += realNow() - b; drawMs += b - a;
+    if (ring.length > RING) { const r0 = realNow(); const px = await comp.finishRead(ring.shift(), yieldTask, frameBuf()); const r1 = realNow(); readMs += r1 - r0; await emit(px, r1); }
   }
 }
 while (ring.length) { const px = await comp.finishRead(ring.shift(), yieldTask, frameBuf()); await emit(px, realNow()); }
