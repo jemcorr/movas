@@ -136,6 +136,7 @@ type Run = {
   holdKind?: "A" | "B" | "C"; // which hold candidate won
   hold?: { cand: Cand; want: number; proof: string }; // the winner of a hold, the frames it had to add, and what the film showed
   followerId?: string; // the follower of a hold (B) or of an insert
+  insertAfter?: string; // the line an insert copies
   altAt?: string; // an insert's other time, the full gap
   words: Words[]; // each change of words, for the proof on screen
 };
@@ -699,6 +700,7 @@ const insertEdit = async (run: Run, text: string, digits = ""): Promise<void> =>
   ln.splice(afterIdx + 1, 0, withAt(newRaw, newAt));
   run.idx = afterIdx + 1;
   run.lid = newId;
+  run.insertAfter = afterId;
   // A punch or dock copy keeps the word groups of the line it copies: one group per hit, the same accent, split as a
   // text edit splits. Fewer words than groups keep one group per word and the first hits.
   const shape = shapeOf(textOfRaw(ln[afterIdx])?.text ?? "");
@@ -995,10 +997,8 @@ const SOUND_VERBS = ["sfx", "pulse", "vo", "music", "duck"];
 /** The sound a viewer hears, as the score solves it. */
 const soundOf = (s: Solved) => JSON.stringify([s.sfx, s.ducks, s.trimBeats, s.durationFrames]);
 /** Where a line's words still live in programs/: a program that draws them does not read the score. */
-const holdersOf = async (run: Run): Promise<string[]> => {
-  const kv = run.before.kvOf[`${run.scene}.${run.lid}`] ?? {};
-  const row = run.before.texts.find((t) => t.id === `${run.scene}.${run.lid}`);
-  const words = [...TEXT_KEYS.map((k) => kv[k]), row ? plainText(row.text ?? "") : ""].filter((w) => w && w.length >= 6);
+/** Every .js file of the film's programs and the install's programs, sorted. */
+const programFiles = async (run: Run): Promise<string[]> => {
   const files: string[] = [];
   const walk = async (d: string) => {
     for await (const e of Deno.readDir(d)) {
@@ -1009,13 +1009,30 @@ const holdersOf = async (run: Run): Promise<string[]> => {
   };
   await walk(`${run.ctx.HERE}/film/programs`).catch(() => {});
   await walk(`${run.ctx.TOOL ?? run.ctx.HERE}/programs`).catch(() => {});
-  files.sort();
+  return files.sort();
+};
+const shortPath = (run: Run, f: string) => f.startsWith(`${run.ctx.HERE}/`) ? f.slice(run.ctx.HERE.length + 1) : f;
+const holdersOf = async (run: Run): Promise<string[]> => {
+  const kv = run.before.kvOf[`${run.scene}.${run.lid}`] ?? {};
+  const row = run.before.texts.find((t) => t.id === `${run.scene}.${run.lid}`);
+  const words = [...TEXT_KEYS.map((k) => kv[k]), row ? plainText(row.text ?? "") : ""].filter((w) => w && w.length >= 6);
+  const files = await programFiles(run);
   const out: string[] = [];
   for (const w of words) {
     for (const f of files) {
       const i = (await Deno.readTextFile(f)).split("\n").findIndex((l) => l.includes(w));
-      if (i >= 0) { out.push(`"${w}" stays in ${f.startsWith(`${run.ctx.HERE}/`) ? f.slice(run.ctx.HERE.length + 1) : f}:${i + 1}`); break; }
+      if (i >= 0) { out.push(`"${w}" stays in ${shortPath(run, f)}:${i + 1}`); break; }
     }
+  }
+  return out;
+};
+/** Where programs name a line id as a quoted literal: the first line of each file, at most 3 files. */
+const readersOf = async (run: Run, id: string): Promise<string[]> => {
+  const out: string[] = [];
+  for (const f of await programFiles(run)) {
+    const i = (await Deno.readTextFile(f)).split("\n").findIndex((l) => l.includes(`"${id}"`) || l.includes(`'${id}'`));
+    if (i >= 0) out.push(`${shortPath(run, f)}:${i + 1}`);
+    if (out.length === 3) break;
   }
   return out;
 };
@@ -1108,6 +1125,13 @@ const finish = async (
     const holders = await holdersOf(run);
     await run.tx.rollback();
     console.log(`NOT DONE: this changes no frame${aboutPicture ? "" : " and no sound"}. ${run.scene}.${run.lid} is not what the viewer sees.${holders.length ? ` ${holders.join("; ")}.` : ""}`);
+    if (form === "insert" && run.insertAfter) {
+      // The scene's program draws the lines it names, so a line with a new id reaches no frame.
+      const at = await readersOf(run, run.insertAfter);
+      console.log(`  Nothing was changed. No program draws a line with the new id ${run.lid}: the scene's program draws the lines it names${at.length ? `, and it names ${run.insertAfter} at ${at.join(", ")}` : ""}.`);
+      console.log(`  To add this line, add ${run.scene}.${run.lid} to the score and to that program by hand, then run plain ./movas do.`);
+      return 1;
+    }
     console.log("  Nothing was changed. A program draws this, so the note needs a program edit by an agent.");
     return 1;
   }
