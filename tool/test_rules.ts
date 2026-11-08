@@ -4,7 +4,14 @@ import { evaluate, MeaningError, readMeaning, tokens, type Meaning, type Row } f
 
 const ROOT = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 const WORK = Deno.env.get("MOVAS_WORK") ?? `${ROOT}/.work`;
-const MACHINE_PUBLIC = Deno.env.get("MOVAS_PUBLIC")!;
+const MACHINE_PUBLIC = Deno.env.get("MOVAS_PUBLIC") ?? "";
+// The fixtures read this machine's fonts and sounds. Without them every render fails and the failures read as rule bugs.
+for (const sub of ["fonts", "sfx"]) {
+  try { if (!MACHINE_PUBLIC || !Deno.statSync(`${MACHINE_PUBLIC}/${sub}`).isDirectory) throw 0; } catch {
+    console.error(`test-rules needs MOVAS_PUBLIC set to a folder with fonts/ and sfx/ (now ${MACHINE_PUBLIC ? `"${MACHINE_PUBLIC}", which has no ${sub}/` : "unset"}). Run it from a film, or set MOVAS_PUBLIC.`);
+    Deno.exit(2);
+  }
+}
 const PORT = parseInt(Deno.env.get("MOVAS_PORT") ?? "4871") + 100;
 const only = Deno.args.filter((a) => !a.startsWith("--"));
 const dec = (b: Uint8Array) => new TextDecoder().decode(b);
@@ -18,7 +25,8 @@ const PUB = `${WORK}/t-rules-public`;
 /** The public folder a test film reads: the machine's fonts and sounds, and a plain tone as the bed. */
 const publicFolder = async () => {
   await Deno.mkdir(`${PUB}/audio`, { recursive: true });
-  for (const sub of ["fonts", "sfx"]) await Deno.symlink(`${MACHINE_PUBLIC}/${sub}`, `${PUB}/${sub}`).catch(() => {});
+  // Relink every run: a link left by an earlier run may point at a folder that moved.
+  for (const sub of ["fonts", "sfx"]) { await Deno.remove(`${PUB}/${sub}`).catch(() => {}); await Deno.symlink(`${MACHINE_PUBLIC}/${sub}`, `${PUB}/${sub}`); }
   const r = await sh("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=110:duration=40", "-ar", "48000", "-ac", "2", `${PUB}/audio/tone.wav`]);
   if (!r.ok) throw new Error(r.err);
 };
