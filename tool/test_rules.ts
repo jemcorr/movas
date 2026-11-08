@@ -63,7 +63,7 @@ const report = async (d: string, args: string[] = ["--nofile"]) => {
   const r = await movas(d, ["film", "--section=flags", ...args]);
   if (!r.ok) throw new Error(`film failed: ${r.text.slice(-500)}`);
   const lines = r.out.split("\n");
-  const flags = lines.filter((l) => /^\d+\. rule /.test(l)).map((l) => ({ id: /^\d+\. rule ([^:]+):/.exec(l)![1], text: l }));
+  const flags = lines.filter((l) => /^\d+\. (?:warn \(unvalidated\) )?rule /.test(l)).map((l) => ({ id: /^\d+\. (?:warn \(unvalidated\) )?rule ([^:]+):/.exec(l)![1], text: l }));
   const cannot = lines.filter((l) => l.startsWith("- "));
   return { flags, cannot, text: r.out };
 };
