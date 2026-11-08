@@ -13,6 +13,7 @@ export type DoCtx = {
   render: (args: string[]) => Promise<{ success: boolean; stdout: Uint8Array; stderr: Uint8Array }>;
   planFor: (film: string | null, tag: string, extra?: string[], quiet?: boolean) => Promise<any | null>;
   planError: () => string; // why the last plan pass that returned null did not run
+  meaningDelta?: () => Promise<{ lines: string[]; newValidated: number }>; // the film's meaning-rule misses against the last save
   analyse: (s: Solved, c: any) => { defects: Map<string, string>; warns: Map<string, string>; rows: Map<string, any> };
   compile: (dir?: string) => Solved;
   readDirection: () => { date: string; id: string; appliesTo: string[]; decision: string; words?: string }[];
@@ -1094,7 +1095,8 @@ const finish = async (
   await Deno.writeTextFile(`${ctx.HERE}/.movas/do-last.json`, JSON.stringify({ defects: [...res.an.defects.keys()], warnings: [...res.an.warns.keys()] }, null, 1));
   // The block.
   const { newD, newW } = res;
-  const out: string[] = [`${newD.length ? "DONE WITH NEW DEFECTS" : "DONE"} ${run.scene}.${run.lid} ${what}`];
+  const md = ctx.meaningDelta ? await ctx.meaningDelta() : null;
+  const out: string[] = [`${(newD.length || md?.newValidated) ? "DONE WITH NEW DEFECTS" : "DONE"} ${run.scene}.${run.lid} ${what}`];
   if (run.split) {
     const r = run.split.rejected;
     out.push(`  split: margin ${margin(run.split.margin)} px.${r ? ` Not taken: "${r.text}" margin ${margin(r.margin)} px. To take it: ./movas do ${run.scene}.${run.lid} "${r.text}"` : ""}`);
@@ -1109,6 +1111,7 @@ const finish = async (
   out.push(...words.rows);
   if (pic) out.push(`  picture: ${pic.count} of ${pic.total} frames change${pic.count ? `: ${rangesText(pic.ranges)}` : ", only the sound does"}.`);
   out.push(`  checks: ${errorsOf(now).length} errors. ${newD.length} new defects, ${newW.length} new warnings, ${res.gone} gone.`);
+  if (md) out.push(...md.lines.map((l) => `  ${l}`));
   const newMsgs = [...newD.map((k) => res.an.defects.get(k)!), ...newW.map((k) => res.an.warns.get(k)!)];
   for (const m of newMsgs.slice(0, 3)) out.push(`  new: ${m}`);
   out.push("  not checked: sound, motion, how it reads to a person.");
@@ -1139,7 +1142,8 @@ const finish = async (
   if (pic) R.push(pic.count ? `${pic.count} frames change on screen, ${rangesText(pic.ranges)}.` : "No frame changes on screen, only the sound.");
   if (run.also.length) R.push(`Also changed ${run.also.length} repeats.`);
   if (run.panel) R.push(`Panel ${run.panel}.`);
-  if (newD.length === 0 && newW.length === 0) R.push("Checks clean.");
+  if (md?.newValidated) R.push(`${md.newValidated} new meaning-rule misses: ${md.lines[1]?.replace(/^NEW rule /, "") ?? ""}.`);
+  if (newD.length === 0 && newW.length === 0 && !md?.newValidated) R.push("Checks clean.");
   else {
     if (newW.length) R.push(`${newW.length} new warnings: ${newW[0]}.`);
     if (newD.length) R.push(`${newD.length} new defects: ${newD[0]}.`);
@@ -1147,7 +1151,7 @@ const finish = async (
   R.push(...dec.report, "Sound and motion not checked.");
   out.push(`report (send it after you read the frame): ${reportText(R)}`);
   console.log(out.join("\n"));
-  return newD.length ? 1 : 0;
+  return newD.length || md?.newValidated ? 1 : 0;
 };
 
 /** The saved version's film, checked out to a temp dir so that it compiles beside the working one. */
@@ -1192,9 +1196,11 @@ const handReport = async (ctx: DoCtx, preview: boolean): Promise<number> => {
   // A hand report writes nothing to the score, so it leaves the last do's undo as it was.
   await Deno.writeTextFile(`${ctx.HERE}/.movas/do-last.json`, JSON.stringify({ defects: [...res.an.defects.keys()], warnings: [...res.an.warns.keys()] }, null, 1));
   const { newD, newW } = res;
-  const out: string[] = [`${newD.length ? "DONE WITH NEW DEFECTS" : "DONE"} ${firstId} hand edits checked`];
+  const md = ctx.meaningDelta ? await ctx.meaningDelta() : null;
+  const out: string[] = [`${(newD.length || md?.newValidated) ? "DONE WITH NEW DEFECTS" : "DONE"} ${firstId} hand edits checked`];
   out.push(`  length: film ${before.durationFrames}f -> ${now.durationFrames}f (${signed(cost.frames)}f). ${cost.moved} events move, ${cost.phase} change bar phase, ${cost.kick.length} leave the kick${cost.kick.length ? `: ${cost.kick.slice(0, 3).join(", ")}` : ""}`);
   out.push(`  checks: ${errorsOf(now).length} errors. ${newD.length} new defects, ${newW.length} new warnings, ${res.gone} gone.`);
+  if (md) out.push(...md.lines.map((l) => `  ${l}`));
   const newMsgs = [...newD.map((k) => res.an.defects.get(k)!), ...newW.map((k) => res.an.warns.get(k)!)];
   for (const m of newMsgs.slice(0, 3)) out.push(`  new: ${m}`);
   out.push("  not checked: sound, motion, how it reads to a person. To see motion: ./movas look <a>..<b> puts 6 frames of a range on one sheet.");
@@ -1204,7 +1210,8 @@ const handReport = async (ctx: DoCtx, preview: boolean): Promise<number> => {
   if (prev) out.push(...prev);
   out.push("  undo: hand edits have no do undo. ./movas undo restores film/ from the last saved version and leaves programs/ unchanged.");
   const R = costSentences(cost);
-  if (newD.length === 0 && newW.length === 0) R.push("Checks clean.");
+  if (md?.newValidated) R.push(`${md.newValidated} new meaning-rule misses: ${md.lines[1]?.replace(/^NEW rule /, "") ?? ""}.`);
+  if (newD.length === 0 && newW.length === 0 && !md?.newValidated) R.push("Checks clean.");
   else {
     if (newW.length) R.push(`${newW.length} new warnings: ${newW[0]}.`);
     if (newD.length) R.push(`${newD.length} new defects: ${newD[0]}.`);
@@ -1212,7 +1219,7 @@ const handReport = async (ctx: DoCtx, preview: boolean): Promise<number> => {
   R.push("Sound and motion not checked.");
   out.push(`report (send it after you read the frame): ${reportText(R)}`);
   console.log(out.join("\n"));
-  return newD.length ? 1 : 0;
+  return newD.length || md?.newValidated ? 1 : 0;
 };
 
 const usage = (msg: string): number => {

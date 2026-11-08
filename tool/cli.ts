@@ -634,5 +634,5 @@ else if (cmd === "undo") {
   console.error(`film report: ${text.length} characters, about ${Math.round(text.length / 3.5)} tokens by characters over 3.5.`);
 } else if (cmd === "do") {
   const { doCmd } = await import("./do.ts");
-  Deno.exit(await doCmd(rest, { HERE: ROOT, TOOL: HERE, FILM, WORK, PUBLIC, PORT, render, planFor, planError: () => planWhy, analyse, compile, readDirection, readKnown, git, ensureHistory, pictureNow: () => planFor(null, "pic0", [], true) }));
+  Deno.exit(await doCmd(rest, { HERE: ROOT, TOOL: HERE, FILM, WORK, PUBLIC, PORT, render, planFor, planError: () => planWhy, analyse, compile, readDirection, readKnown, git, ensureHistory, pictureNow: () => planFor(null, "pic0", [], true), meaningDelta: () => meaningDeltaLines([]) }));
 } else console.log("usage: movas brief [scene] | help [scene|programs|rules] | check [--full] | report | probe | timeline | at <q> | look <q>... | render | save <msg> | log | undo | diff <a> [b] | apply <patch.json> | compare <ref> <event>... | rebuild <ref> <out> [--expect=sha256] | doctor [--freeze|--restore] | windows | film [--section=] [--file=] | leak | test-rules | test-ops");
