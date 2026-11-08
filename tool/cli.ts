@@ -94,9 +94,12 @@ const readDirection = (): Decision[] => {
   }
   return out;
 };
-const planKey = async (film: string | null) => {
+const planKey = async (film: string | null, extra: string[] = []) => {
   const trees = [film ?? FILM, `${ROOT}/film/programs`, `${HERE}/programs`, `${HERE}/runtime`, `${HERE}/tool`, `${PUBLIC}/fonts`].map((d) => { try { return hashTree(d); } catch { return "none"; } });
-  return (await sha256Hex(new TextEncoder().encode(trees.join("|")))).slice(0, 32);
+  let score = "nocompile";
+  try { score = JSON.stringify(compile(film ?? FILM)); } catch { /* a film that does not compile fails its plan pass anyway */ }
+  const parts = [...trees, score, JSON.stringify(extra), Deno.env.get("MOVAS_SET") ?? ""];
+  return (await sha256Hex(new TextEncoder().encode(parts.join("|")))).slice(0, 32);
 };
 const keepPlan = (from: string, key: string) => {
   try {
@@ -113,7 +116,7 @@ let planWhy = "";
 const planFor = async (film: string | null, tag: string, extra: string[] = [], quiet = false): Promise<any | null> => {
   const path = `${WORK}/checks-${PORT}-${tag}.json`;
   // A plan pass is a pure function of the film, the programs, the runtime, the compiler and the fonts. The same tree gives the same answer, with no shell.
-  const key = await planKey(film), kept = `${WORK}/plan-cache/${key}.json`;
+  const key = await planKey(film, extra), kept = `${WORK}/plan-cache/${key}.json`;
   try { const j = JSON.parse(Deno.readTextFileSync(kept)); stamp({ step: "plan.hit", tag }); return j; } catch { /* run it */ }
   const o = await render(["--planOnly", `--checksOut=${path}`, `--planOut=${path}.pic`, "--timeout=180", ...(film ? [`--film=${film}`] : []), ...extra]);
   if (!o.success) {
