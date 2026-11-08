@@ -3,6 +3,7 @@
 import { Compositor, coveredBy, flatten } from "./reelrt.js";
 import { makeFilm } from "/programs/film.js";
 import { scanFrame } from "./scan.js";
+import { Motion } from "./motion.js";
 
 const ws = new WebSocket(`ws://${location.host}/pipe`); ws.binaryType = "arraybuffer";
 // What is said before the socket opens waits for it: the sender below can fail that early, and send() would throw.
@@ -163,11 +164,36 @@ for (const f of frames) {
 }
 if (emptyFrom !== null && frames.length && frames[frames.length - 1] + 1 - emptyFrom >= DEAD_MIN) deadAir.push({ first: emptyFrom, n: frames[frames.length - 1] + 1 - emptyFrom });
 const planMs = realNow() - t0;
+// Motion: steps and spikes per element, tracked over runs of frames between scene starts. A run whose frames hash as a run
+// in the base the server sends (runs of earlier passes) keeps those events, so a note pays only for the scenes it changed.
+// It reads lists again and changes nothing, so the hashes and the pixels stay as they are.
+let motion = null;
+if (job.checks !== false && job.motion) {
+  const m0 = realNow();
+  const scenes = [...(S.scenes ?? [])].sort((a, b) => a.startFrame - b.startFrame), starts = new Set(scenes.map((s) => s.startFrame));
+  const sceneAt = (f) => { let id = null; for (const s of scenes) if (f >= s.startFrame && f < s.endFrame) id = s.id; return id; };
+  const runs = []; let run = null;
+  for (const f of frames) { if (!run || starts.has(f) || f !== run.to) { run = { from: f, to: f + 1 }; runs.push(run); } else run.to = f + 1; }
+  const base = job.motionBase ?? {};
+  motion = { runs: [], ms: 0, scanMs: 0, hookMs: 0, items: 0, hookItems: 0, tracked: 0, reused: 0 };
+  for (const r of runs) {
+    const parts = [fmt.id, fmt.w, fmt.h];
+    for (let f = r.from; f < r.to; f++) parts.push(hashes.get(f), sceneAt(f));
+    const h = hash53(parts.join("|")), kept = base[h];
+    if (kept) { motion.reused++; motion.runs.push({ from: r.from, n: r.to - r.from, h, tracked: false, ev: kept.ev, blind: kept.blind, hooked: kept.hooked }); continue; }
+    const mo = new Motion({ W: fmt.w, H: fmt.h, programs, comp, now: realNow, sceneAt });
+    for (let f = r.from; f < r.to; f++) mo.frame(f, film.frame(f));
+    motion.tracked++;
+    for (const k of ["scanMs", "hookMs", "items", "hookItems"]) motion[k] += mo[k];
+    motion.runs.push({ from: r.from, n: r.to - r.from, h, tracked: true, ms: Math.round(mo.ms), hookMs: Math.round(mo.hookMs), ev: mo.events.map((e) => ({ ...e, f: e.f - r.from })), blind: [...mo.blind], hooked: [...mo.hooked] });
+  }
+  motion.ms = realNow() - m0;
+}
 // `./movas film` reads the list frame by frame. This pass draws nothing and stays out of the plan time and the hashes.
 if (job.scan) { let batch = []; for (const f of frames) { batch.push([f, scanFrame(film.frame(f), comp)]); if (batch.length >= 120) { say({ t: "scan", rows: batch }); batch = []; await settle(); } } if (batch.length) say({ t: "scan", rows: batch }); }
 const list = frames.map((f) => hashes.get(f));
 await settle();
-say({ t: "plan", kvReads: Object.fromEntries(Object.entries(kvReads).map(([k, s]) => [k, [...s]])), kvEnum: [...kvEnum], planMs, frames, hashes: list, checks: { texts: Object.values(textStats), collisions: [...pairs.values()], occluded: occl, offFrame: Object.fromEntries(Object.entries(offFrame).map(([k, v]) => [k, { n: v.length, first: v[0] }])), drawn: [...drawn.values()], landBoxes, deadAir }, bakes: comp.bakes });
+say({ t: "plan", kvReads: Object.fromEntries(Object.entries(kvReads).map(([k, s]) => [k, [...s]])), kvEnum: [...kvEnum], planMs, frames, hashes: list, checks: { texts: Object.values(textStats), collisions: [...pairs.values()], occluded: occl, offFrame: Object.fromEntries(Object.entries(offFrame).map(([k, v]) => [k, { n: v.length, first: v[0] }])), drawn: [...drawn.values()], landBoxes, deadAir, ...(motion ? { motion } : {}) }, bakes: comp.bakes });
 
 // ---------- Draw only what is missing. ----------
 const need = await next();

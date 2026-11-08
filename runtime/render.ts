@@ -167,6 +167,13 @@ for (const root of PROGRAM_ROOTS) for (const name of await dirsOf(root)) {
 }
 for (const name of film.uses ?? []) { try { await Deno.stat(`${HERE}/programs/formats/${name}.js`); moduleSet.add(`/programs/formats/${name}.js`); } catch { /* a pack with no drawing */ } }
 const autoModules = [...moduleSet].sort();
+// The motion check runs in plan-only passes (and with --motion), not in scan passes. --motionBase names a JSON file of
+// motion runs, { motion: { runs } }: a run that hashes the same keeps its events. It only saves work, so no key holds it.
+const motionOn = !("nomotion" in args) && ("motion" in args || ("planOnly" in args && !args.scanOut));
+let motionBase: Record<string, unknown> = {};
+if (motionOn && args.motionBase) {
+  try { for (const r of JSON.parse(Deno.readTextFileSync(args.motionBase)).motion?.runs ?? []) motionBase[r.h] = { ev: r.ev, blind: r.blind, hooked: r.hooked }; } catch { motionBase = {}; }
+}
 // ---------- protocol ----------
 const tw = Math.round((format.w * scale) / 2) * 2, th = Math.round((format.h * scale) / 2) * 2;
 const finish = (code = 0) => { try { shell.kill("SIGKILL"); } catch { /* gone */ } server.shutdown(); if (code) Deno.exit(code); };
@@ -224,7 +231,7 @@ const result = await new Promise<any>((resolve, reject) => {
       const m = JSON.parse(e.data);
       if (m.t === "hello") {
         lap("hello");
-        ws.send(JSON.stringify({ t: "job", solved, format, formatId, scale, segments, checks: !("nochecks" in args) && !stills, programHash, scan: !!args.scanOut, window: parseInt(args.window ?? "12"), modules: args.modules !== undefined ? args.modules.split(",").filter(Boolean) : autoModules })); audioStart();
+        ws.send(JSON.stringify({ t: "job", solved, format, formatId, scale, segments, checks: !("nochecks" in args) && !stills, programHash, scan: !!args.scanOut, motion: motionOn, motionBase, window: parseInt(args.window ?? "12"), modules: args.modules !== undefined ? args.modules.split(",").filter(Boolean) : autoModules })); audioStart();
       } else if (m.t === "gl") report.gl = m;
       else if (m.t === "blocked") blocked.push(m.msg);
       else if (m.t === "error") reject(new Error([m.msg, ...new Set(blocked)].join("\n")));
