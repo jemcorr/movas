@@ -140,6 +140,8 @@ const snapUp = (c: Clock, v: number, snap: string): number => {
 export const plain = (s: string) => s.replace(/\*/g, "").replace(/\s\/\s/g, " ");
 export const wordCount = (s: string) => plain(s).split(/\s+/).filter((w) => /[\p{L}\p{N}]/u.test(w)).length;
 
+/** Every verb a scene line can use, apart from format verbs. */
+export const SCENE_VERBS = new Set(["punch", "dock", "text", "tag", "typed", "credits", "panel", "mark", "cue", "end", "sfx", "pulse", "vo", "clip", "assert"]);
 /** Verbs that take no quoted text of their own, with the keys that hold their words. An empty list means the verb has none. */
 export const WORD_KEYS: Record<string, string[]> = {
   mark: ["span"], panel: ["title"], credits: ["title", "by", "license"],
@@ -277,6 +279,8 @@ export const solve = (film: Film, publicDir?: string): Solved => {
     const seen = new Set<string>();
     for (let idx = 0; idx < s.lines.length; idx++) {
       const l = s.lines[idx];
+      // A verb the compiler does not know still compiles, as a plain event with its words as a label. Say so, since a typo reads the same way.
+      if (!SCENE_VERBS.has(l.verb) && !FORMAT_VERBS[l.verb]) P.push({ level: "warn", code: "verb.unknown", msg: `${l.id ? `${sid}.${l.id}` : sid}: no verb "${l.verb}", so the line is a plain event${l.text !== undefined ? " and its words draw as a label" : ""}. Verbs: ${[...SCENE_VERBS].join(", ")}${Object.keys(FORMAT_VERBS).length ? `, and from formats ${Object.keys(FORMAT_VERBS).join(", ")}` : ""}`, loc: l.loc, id: l.id ? `${sid}.${l.id}` : undefined });
       if (l.verb === "sfx" || l.verb === "pulse") { sfxLines.push({ scene: sid, l, prev, idx }); continue; }
       if (l.verb === "assert") continue;
       if (l.verb === "end") {
