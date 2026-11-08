@@ -113,13 +113,28 @@ const keepPlan = (from: string, key: string) => {
 };
 /** Why the last plan pass that returned null did not run: the first useful line of its error text. */
 let planWhy = "";
+// Motion runs by content: a run of frames between scene starts whose list hashes match a stored run keeps its events, so a
+// note tracks only the scenes it changed. The answer equals a full pass, so the store stays out of the plan key. Its name
+// holds the runtime and the fonts, the inputs of the tracker that the list hashes do not cover.
+const motionStore = async () => `${WORK}/motion-runs-${(await sha256Hex(new TextEncoder().encode([`${HERE}/runtime`, `${PUBLIC}/fonts`].map((d) => { try { return hashTree(d); } catch { return "none"; } }).join("|")))).slice(0, 16)}.json`;
+const keepMotion = (store: string, runs: any[]) => {
+  try {
+    let old: any[] = [];
+    try { old = JSON.parse(Deno.readTextFileSync(store)).motion.runs; } catch { /* first */ }
+    const byH = new Map<string, any>(old.map((r) => [r.h, r]));
+    for (const r of runs) { byH.delete(r.h); byH.set(r.h, { h: r.h, ev: r.ev, blind: r.blind, hooked: r.hooked }); }
+    Deno.writeTextFileSync(`${store}.tmp`, JSON.stringify({ motion: { runs: [...byH.values()].slice(-600) } }));
+    Deno.renameSync(`${store}.tmp`, store);
+  } catch { /* the store never stops a plan */ }
+};
 /** One plan pass with no pixels. Returns null when it does not run, for example because the film has errors; quiet keeps the error text out. */
 const planFor = async (film: string | null, tag: string, extra: string[] = [], quiet = false): Promise<any | null> => {
   const path = `${WORK}/checks-${PORT}-${tag}.json`;
   // A plan pass is a pure function of the film, the programs, the runtime, the compiler and the fonts. The same tree gives the same answer, with no shell.
   const key = await planKey(film, extra), kept = `${WORK}/plan-cache/${key}.json`;
   try { const j = JSON.parse(Deno.readTextFileSync(kept)); stamp({ step: "plan.hit", tag }); return j; } catch { /* run it */ }
-  const o = await render(["--planOnly", `--checksOut=${path}`, `--planOut=${path}.pic`, "--timeout=180", ...(film ? [`--film=${film}`] : []), ...extra]);
+  const store = await motionStore();
+  const o = await render(["--planOnly", `--checksOut=${path}`, `--planOut=${path}.pic`, "--timeout=180", ...(film ? [`--film=${film}`] : []), ...extra, `--motionBase=${store}`]);
   if (!o.success) {
     const err = new TextDecoder().decode(o.stderr);
     planWhy = firstErrorLine(err) || `the renderer stopped with code ${o.code} and printed nothing`;
@@ -135,6 +150,7 @@ const planFor = async (film: string | null, tag: string, extra: string[] = [], q
       Deno.writeTextFileSync(path, JSON.stringify(j));
       Deno.removeSync(`${path}.pic`);
     } catch { /* the check that reads it is skipped */ }
+    if (j.motion?.tracked) keepMotion(store, j.motion.runs);
     keepPlan(path, key);
     return j;
   } catch (e) {
@@ -180,6 +196,26 @@ const meaningDeltaLines = async (extra: string[] = []): Promise<{ lines: string[
     // The delta is a report, never a reason for do or report to stop: any failure here prints as not checked.
     return { lines: [`meaning rules: not checked: ${e instanceof MeaningError ? "" : "error: "}${String((e as Error).message).split("\n")[0]}`], newValidated: 0 };
   }
+};
+
+/** The motion defects of a plan's checks: `motion.<kind> <scene> <owner> <n>` and its line. */
+const motionLines = (m: any): [string, string][] => {
+  const at = new Map<string, Map<number, any[]>>();
+  for (const r of m?.runs ?? []) for (const e of r.ev ?? []) {
+    const g = `${e.k} ${e.sc ?? "-"} ${e.owner}`, byF = at.get(g) ?? at.set(g, new Map()).get(g)!, f = r.from + e.f;
+    (byF.get(f) ?? byF.set(f, []).get(f)!).push(e);
+  }
+  const out: [string, string][] = [];
+  for (const [g, byF] of at) {
+    const [kind, sc, owner] = g.split(" ");
+    [...byF.keys()].sort((a, b) => a - b).forEach((f, n) => {
+      const ev = byF.get(f)!, d = ev.map((e) => Math.abs(e.d)).sort((a, b) => a - b), px = Math.round(d[Math.floor(d.length / 2)]);
+      const who = ev.length === 1 ? `1 element ${kind}s` : `${ev.length} elements ${kind}`;
+      const path = kind === "spike" ? (ev.length === 1 ? "off its path" : "off their path") : ev.every((e) => e.still) ? "off a still path" : "off a steady path";
+      out.push([`motion.${kind} ${sc} ${owner} ${n}`, `motion.${kind} ${sc} ${owner}: ${who} ${px} px ${path} at f${f}`]);
+    });
+  }
+  return out;
 };
 
 // The two verbs whose reading floor the renderer holds, so a miss is a defect. Other verbs read their floor in the score.
@@ -241,6 +277,9 @@ const analyse = (s: any, c: any) => {
     deadPer.set(sc, nth + 1);
     warns.set(`dead.air ${sc} ${nth}`, `dead.air ${sc}: nothing on screen for ${(d.n / fps).toFixed(1)} s from f${d.first}`);
   }
+  // Steps and spikes on element paths, one defect per frame of each owner (the first two id segments, the GL program, or -).
+  // Keyed by kind, scene, owner and count, like dead air: a retime keeps the key, one more such frame is new.
+  for (const [k, line] of motionLines(c.motion)) defects.set(k, line);
   return { defects, warns, rows };
 };
 
