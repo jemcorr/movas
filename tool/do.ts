@@ -351,23 +351,81 @@ const programsJs = async (here: string, tool = here): Promise<string[]> => {
 /** The film's own program files: the only programs a do writes. The install's programs are shared by every film. */
 const filmProgramsJs = (here: string): Promise<string[]> => walkJs(`${here}/film/programs`).catch(() => [] as string[]);
 
-/** The repeat rules: same-scene mark spans with one-word pairs, then 3-word pairs in the other lines and files. Returns the 3-word pairs. */
+/** The span's new words after a word change: the words that now stand where the span stood. Null when nothing of it is left. */
+export const moveSpan = (span: string, oldText: string, newText: string): string | null => {
+  if (newText.includes(span)) return span;
+  const words = (t: string) => t.split(/\s+/).filter((w) => w !== "");
+  const norm = (w: string) => w.toLowerCase().replace(/^[.,!?;:"'()…]+/, "").replace(/[.,!?;:"'()…]+$/, "");
+  const oldW = words(oldText), newW = words(newText), spanW = words(span);
+  const k = spanW.length;
+  if (k === 0) return null;
+  const on = oldW.map(norm), nn = newW.map(norm), sn = spanW.map(norm);
+  let i = -1;
+  for (let s = 0; s + k <= on.length && i < 0; s++) if (sn.every((w, t) => on[s + t] === w)) i = s;
+  if (i < 0) return null;
+  // LCS table, then one walk that pairs the matched old and new words.
+  const n = on.length, m = nn.length;
+  const dp: number[][] = Array.from({ length: n + 1 }, () => new Array<number>(m + 1).fill(0));
+  for (let a = n - 1; a >= 0; a--) {
+    for (let b = m - 1; b >= 0; b--) dp[a][b] = on[a] === nn[b] ? dp[a + 1][b + 1] + 1 : Math.max(dp[a + 1][b], dp[a][b + 1]);
+  }
+  const match = new Map<number, number>();
+  for (let a = 0, b = 0; a < n && b < m;) {
+    if (on[a] === nn[b]) { match.set(a, b); a++; b++; }
+    else if (dp[a + 1][b] >= dp[a][b + 1]) a++;
+    else b++;
+  }
+  const j = i + k - 1;
+  let start: number;
+  if (match.has(i)) start = match.get(i)!;
+  else {
+    let before = -1;
+    for (let x = i - 1; x >= 0 && before < 0; x--) if (match.has(x)) before = match.get(x)!;
+    start = before + 1;
+  }
+  let end: number;
+  if (match.has(j)) end = match.get(j)!;
+  else {
+    let after = -1;
+    for (let x = j + 1; x < n && after < 0; x++) if (match.has(x)) after = match.get(x)!;
+    end = after < 0 ? m - 1 : after - 1;
+  }
+  if (start > end) return null;
+  const result = newW.slice(start, end + 1).join(" ").replace(/^["'(]+/, "").replace(/[.,!?;:"')…]+$/, "");
+  return result !== "" && newText.includes(result) ? result : null;
+};
+
+/** The repeat rules: mark spans on the edited id, then 3-word pairs in the other lines and files. Returns the 3-word pairs. */
 const repeats = async (run: Run, oldPlain: string, newPlain: string): Promise<{ from: string; to: string }[]> => {
   const { ctx } = run;
-  const p3 = sentencePairs(oldPlain, newPlain, 3);
-  if (p3.length === 0) return p3;
-  const p1 = sentencePairs(oldPlain, newPlain, 1);
   const note = (path: string, i: number) => run.also.push(`${rel(ctx, path)}:${i + 1}`);
-  // 1. The scene file: mark lines on the edited id, then every other line with the 3-word pairs.
+  const p1 = sentencePairs(oldPlain, newPlain, 1);
   const scene = await linesOf(run, run.path);
+  // 0. Mark spans on the edited id: keep when still on screen, else the one-word pairs, else the words that now stand there.
+  // Runs before the early return below, so a mark follows its line even when no 3-word pair exists.
   scene.forEach((raw, i) => {
     if (i === run.idx) return;
     const parsed = parseLine(raw, { file: run.path, line: i + 1 });
-    if (parsed?.verb === "mark" && parsed.kv.on === run.lid) {
-      const next = raw.replace(/span="((?:[^"\\]|\\.)*)"/, (_, body: string) => `span="${replaceRepeats(body, p1)}"`);
-      if (next !== raw) { scene[i] = next; note(run.path, i); }
-      return;
+    if (parsed?.verb !== "mark" || parsed.kv.on !== run.lid) return;
+    const m = /span="((?:[^"\\]|\\.)*)"/.exec(raw);
+    if (!m) return;
+    const body = m[1];
+    let want: string | null = body;
+    if (!newPlain.includes(body)) {
+      const viaPairs = replaceRepeats(body, p1);
+      want = newPlain.includes(viaPairs) ? viaPairs : moveSpan(body, oldPlain, newPlain);
     }
+    if (want === null || want === body) return;
+    scene[i] = raw.replace(/span="((?:[^"\\]|\\.)*)"/, () => `span="${want}"`);
+    note(run.path, i);
+  });
+  const p3 = sentencePairs(oldPlain, newPlain, 3);
+  if (p3.length === 0) return p3;
+  // 1. The scene file: every other line with the 3-word pairs.
+  scene.forEach((raw, i) => {
+    if (i === run.idx) return;
+    const parsed = parseLine(raw, { file: run.path, line: i + 1 });
+    if (parsed?.verb === "mark" && parsed.kv.on === run.lid) return;
     if (isCommentLine(raw)) return;
     const next = replaceRepeats(raw, p3);
     if (next !== raw) { scene[i] = next; note(run.path, i); }
