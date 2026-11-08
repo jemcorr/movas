@@ -144,7 +144,7 @@ const planFor = async (film: string | null, tag: string, extra: string[] = [], q
 
 /** A scan pass (display-list rows per frame, no pixels), cached by the same key as the plan. */
 const scanFor = async (film: string | null, extra: string[] = []): Promise<{ rows: Map<number, any[]>; checks: any } | null> => {
-  const key = await planKey(film), path = `${WORK}/film-scan-${key}.jsonl`, checksPath = `${WORK}/film-checks-${key}.json`;
+  const key = await planKey(film, extra), path = `${WORK}/film-scan-${key}.jsonl`, checksPath = `${WORK}/film-checks-${key}.json`;
   await Deno.mkdir(WORK, { recursive: true });
   try { await Deno.stat(path); await Deno.stat(checksPath); } catch {
     const o = await render(["--planOnly", `--scanOut=${path}.tmp`, `--checksOut=${checksPath}`, "--timeout=180", ...(film ? [`--film=${film}`] : []), ...extra]);
@@ -176,8 +176,8 @@ const meaningDeltaLines = async (extra: string[] = []): Promise<{ lines: string[
     if (!base) return { lines: ["meaning rules: the saved version does not scan, so there is no baseline."], newValidated: 0 };
     return meaningDelta(now, base);
   } catch (e) {
-    if (e instanceof MeaningError) return { lines: [`meaning rules: not checked: ${(e as Error).message}`], newValidated: 0 };
-    throw e;
+    // The delta is a report, never a reason for do or report to stop: any failure here prints as not checked.
+    return { lines: [`meaning rules: not checked: ${e instanceof MeaningError ? "" : "error: "}${String((e as Error).message).split("\n")[0]}`], newValidated: 0 };
   }
 };
 
