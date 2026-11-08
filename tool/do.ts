@@ -791,6 +791,7 @@ const commit = async (run: Run): Promise<void> => {
 
 const errorsOf = (s: Solved) => s.problems.filter((p) => p.level === "error");
 const NOT_CHECKED = "sound, motion other than steps and spikes, how it reads to a person";
+const MOTION_FIX = "  motion: a step is an element that jumps off its own smooth path in one frame; a spike leaves it for one frame. The fix is usually in the program the line names: ease the move over a few frames (a scroll eases its offset), keep a wrap or a reset off screen, or make the jump a cut.";
 /** One row per GL program with no track() hook in the scenes this plan tracked: the motion check cannot see inside it. */
 const blindRows = (plan: any): string[] => [...new Set<string>((plan?.motion?.runs ?? []).filter((r: any) => r.tracked).flatMap((r: any) => r.blind ?? []))].sort().map((p) => `  motion inside ${p} not checked.`);
 const scopedTo = (key: string, scene: string) => key.split(/[\s|]+/).some((t) => t === scene || t.startsWith(`${scene}.`));
@@ -1163,6 +1164,7 @@ const finish = async (
   if (md) out.push(...md.lines.map((l) => `  ${l}`));
   const newMsgs = [...newD.map((k) => res.an.defects.get(k)!), ...newW.map((k) => res.an.warns.get(k)!)];
   for (const m of newMsgs.slice(0, 3)) out.push(`  new: ${m}`);
+  if (newD.some((k) => k.startsWith("motion."))) out.push(MOTION_FIX);
   out.push(`  not checked: ${NOT_CHECKED}.`, ...blindRows(res.plan));
   if (await programsChanged(ctx)) out.push("programs changed since the last save: run ./movas purity before you report done.");
   const current = (await linesOf(run, run.path))[run.idx];
@@ -1252,6 +1254,7 @@ const handReport = async (ctx: DoCtx, preview: boolean): Promise<number> => {
   if (md) out.push(...md.lines.map((l) => `  ${l}`));
   const newMsgs = [...newD.map((k) => res.an.defects.get(k)!), ...newW.map((k) => res.an.warns.get(k)!)];
   for (const m of newMsgs.slice(0, 3)) out.push(`  new: ${m}`);
+  if (newD.some((k) => k.startsWith("motion."))) out.push(MOTION_FIX);
   out.push(`  not checked: ${NOT_CHECKED}. To see motion: ./movas look <a>..<b> puts 6 frames of a range on one sheet.`, ...blindRows(res.plan));
   if (await programsChanged(ctx)) out.push("programs changed since the last save: run ./movas purity before you report done.");
   if (notes.length) out.push(`  note: ${notes.join("; ")}`);

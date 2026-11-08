@@ -198,7 +198,9 @@ const meaningDeltaLines = async (extra: string[] = []): Promise<{ lines: string[
   }
 };
 
-/** The motion defects of a plan's checks: `motion.<kind> <scene> <owner> <n>` and its line. */
+/** A page module url as a path for a reader: the film's own program file, or the install's. */
+const programPathOf = (url: string) => { try { Deno.statSync(`${FILM}${url}`); return `film${url}`; } catch { return `${url.slice(1)} in the movas install`; } };
+/** The motion defects of a plan's checks: `motion.<kind> <scene> <owner> <n>` and its line, which names the program that drew it. */
 const motionLines = (m: any): [string, string][] => {
   const at = new Map<string, Map<number, any[]>>();
   for (const r of m?.runs ?? []) for (const e of r.ev ?? []) {
@@ -212,7 +214,9 @@ const motionLines = (m: any): [string, string][] => {
       const ev = byF.get(f)!, d = ev.map((e) => Math.abs(e.d)).sort((a, b) => a - b), px = Math.round(d[Math.floor(d.length / 2)]);
       const who = ev.length === 1 ? `1 element ${kind}s` : `${ev.length} elements ${kind}`;
       const path = kind === "spike" ? (ev.length === 1 ? "off its path" : "off their path") : ev.every((e) => e.still) ? "off a still path" : "off a steady path";
-      out.push([`motion.${kind} ${sc} ${owner} ${n}`, `motion.${kind} ${sc} ${owner}: ${who} ${px} px ${path} at f${f}`]);
+      const by = new Map<string, number>(); for (const e of ev) if (e.by) by.set(e.by, (by.get(e.by) ?? 0) + 1);
+      const top = [...by].sort((a, b) => b[1] - a[1])[0]?.[0];
+      out.push([`motion.${kind} ${sc} ${owner} ${n}`, `motion.${kind} ${sc} ${owner}: ${who} ${px} px ${path} at f${f}${top ? `, drawn by ${programPathOf(top)}` : ""}`]);
     });
   }
   return out;
