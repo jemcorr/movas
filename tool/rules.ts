@@ -225,6 +225,8 @@ const normal = (s: string) => plainText(s).toLowerCase();
 const notDrawn = (r: Row) => r.runs?.length ? "it is drawn but never at full opacity, so its box was not read" : "the display list has no element with its id";
 
 /** One fact of one line. A fact the film has no way to give is unknown, which is a refusal and never a pass. */
+/** A measured number for a reader: at most 2 decimals. The comparison uses the full value. */
+const num2 = (s: string) => /^-?\d+\.\d{3,}$/.test(s) ? String(Math.round(parseFloat(s) * 100) / 100) : s;
 export const readFact = (M: Meaning, r: Row, key: string, fps: number): Got => {
   if (r.verb === "scene" || r.verb === "film") {
     if (key === "verb") return VALUE(r.verb);
@@ -279,8 +281,8 @@ const compare = (t: Term, g: Got): Tri => {
   switch (t.op) {
     case "=": return { ok: t.vals.includes(s), got: s };
     case "!=": return { ok: !t.vals.includes(s), got: s };
-    case ">=": return { ok: parseFloat(s) >= t.num, got: s };
-    case "<=": return { ok: parseFloat(s) <= t.num, got: s };
+    case ">=": return { ok: parseFloat(s) >= t.num, got: num2(s) };
+    case "<=": return { ok: parseFloat(s) <= t.num, got: num2(s) };
     case "~": t.re!.lastIndex = 0; return { ok: t.re!.test(s), got: s };
     case "!~": t.re!.lastIndex = 0; return { ok: !t.re!.test(s), got: s };
   }
