@@ -183,7 +183,7 @@ export const keysPhrase = (keys: string[]): string => (keys.length < 2 ? keys.ma
 
 // ---------- Solve: every event is a pure function of earlier events ----------
 export type Solved = {
-  film: Film; clock: Clock; events: Record<string, Ev>; texts: TextRow[]; sfx: SfxRow[]; floors: FloorRow[]; problems: Problem[]; scenes: SceneRow[]; durationFrames: number; snaps: SnapRow[]; ducks: number[]; trimBeats: number; flashes: { id: string; frame: number; color: string; peak: number; len: number }[]; kvOf: Record<string, Record<string, string>>; panels: Record<string, Record<string, Record<string, string>>>;
+  film: Film; clock: Clock; events: Record<string, Ev>; texts: TextRow[]; sfx: SfxRow[]; floors: FloorRow[]; problems: Problem[]; scenes: SceneRow[]; durationFrames: number; snaps: SnapRow[]; ducks: number[]; duckSpans: { from: number; to: number }[]; media: any[]; style: Record<string, Record<string, string>>; defaultFormat: string; trimBeats: number; flashes: { id: string; frame: number; color: string; peak: number; len: number }[]; kvOf: Record<string, Record<string, string>>; panels: Record<string, Record<string, Record<string, string>>>;
 };
 export type TextRow = { id: string; scene: string; verb: string; text: string; words: number; at: string; out?: string; kv: Record<string, string>; loc: Loc };
 export type SfxRow = { key: string; scene: string; at: string; beat: number; frame: number; file: string; vol: number; cls: string; loc: Loc };
