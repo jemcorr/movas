@@ -131,7 +131,7 @@ const fmt = (f: number, fps: number) => { const s = f / fps, m = Math.floor(s / 
 const clean = (s: string) => s.replace(/\*/g, "").replace(/\s+\/\s+/g, " / ").replace(/\\n/g, " / ").replace(/\n/g, " / ");
 const pct = (a: number[], p: number) => { if (!a.length) return 0; const s = [...a].sort((x, y) => x - y); return s[Math.min(s.length - 1, Math.floor(p * s.length))]; };
 
-export const buildReport = (o: { s: any; checks: any; rows: Map<number, Item[]>; meaning: Meaning; px: any | null; sections: Set<string>; W: number; H: number }) => {
+export const buildReport = (o: { s: any; checks: any; rows: Map<number, Item[]>; meaning: Meaning; px: any | null; sections: Set<string>; W: number; H: number; onHits?: (hits: { key: string; msg: string; unvalidated: boolean }[]) => void }) => {
   const { s, rows, meaning, px, sections, W, H } = o;
   const fps = s.clock.fps, scenes = [...s.scenes].sort((a: any, b: any) => a.startFrame - b.startFrame), frames = [...rows.keys()].sort((a, b) => a - b);
   const refRead = (words: number, verb: string) => { const r = s.film.rules?.find((x: any) => x.id === `read.${verb}`); const per = parseFloat(r?.kv?.per_word ?? "0.2"), base = parseFloat(r?.kv?.base ?? "0.5"); return base + per * words; };
@@ -285,6 +285,9 @@ export const buildReport = (o: { s: any; checks: any; rows: Map<number, Item[]>;
   const quote = (r: Row) => `${r.id} "${clean(r.text).slice(0, 28)}"`;
   const ending = (h: { note: string; from: string }) => `${h.note ? ` Limit ${h.note}.` : ""} From ${h.from}.`;
   // A rule that compares two groups of lines: their usual drawn facts must differ.
+  // A rule set on one film only is reported as unvalidated; it is a warning until a second film checks it.
+  const unv = (n?: string) => (n ?? "").includes("set on one film") ? "warn (unvalidated) " : "";
+  const mHits: { key: string; msg: string; unvalidated: boolean }[] = [];
   for (const al of meaning.alikes) {
     const pick = (terms: typeof al.a) => beats.filter((b) => allOf(meaning, terms, b, fps).ok === true && b.drawn?.fillRgb);
     const A = pick(al.a), B = pick(al.b);
@@ -292,21 +295,26 @@ export const buildReport = (o: { s: any; checks: any; rows: Map<number, Item[]>;
     const modal = (l: Row[], f: (r: Row) => string) => { const c = new Map<string, number>(); for (const r of l) c.set(f(r), (c.get(f(r)) ?? 0) + 1); return [...c].sort((a, b) => b[1] - a[1])[0][0]; };
     const fa = parseCss(modal(A, (r) => r.drawn!.fill)), fb = parseCss(modal(B, (r) => r.drawn!.fill)), aa = modal(A, (r) => r.drawn!.align), ab = modal(B, (r) => r.drawn!.align);
     const de = fa && fb ? deltaE(fa, fb) : 99;
-    if (aa === ab && de < lim("alike.delta")) flag(`rule ${al.id}`, `${al.say}: both ${aa}, fill ${toHex(fa)} and ${toHex(fb)}, deltaE ${de.toFixed(1)}. ${A.length} and ${B.length} lines, first ${A[0].id}, ${B[0].id}.${ending(al)}`);
+    if (aa === ab && de < lim("alike.delta")) {
+      flag(`${unv(al.note)}rule ${al.id}`, `${al.say}: both ${aa}, fill ${toHex(fa)} and ${toHex(fb)}, deltaE ${de.toFixed(1)}. ${A.length} and ${B.length} lines, first ${A[0].id}, ${B[0].id}.${ending(al)}`);
+      mHits.push({ key: `${al.id}|alike`, msg: `${al.say}`, unvalidated: unv(al.note) !== "" });
+    }
   }
+  for (const h of result.hits) if (h.row.verb !== "scene" && h.row.verb !== "film") mHits.push({ key: `${h.rule}|${h.row.id}`, msg: `${h.say} on ${h.row.id}${h.want !== undefined ? ` (expected ${h.want}, drawn ${h.got})` : ""}`, unvalidated: (h.note ?? "").includes("set on one film") });
+  o.onHits?.(mHits);
   const byRule = new Map<string, typeof result.hits>();
   for (const h of result.hits) (byRule.get(h.rule) ?? byRule.set(h.rule, []).get(h.rule)!).push(h);
   for (const [id, hs] of byRule) {
     const h = hs[0], row = h.row;
     if (row.verb === "scene" || row.verb === "film") {
-      for (const x of hs) flag(`rule ${id}`, `${x.say}. Expected ${x.want}, got ${x.got}, on ${x.row.id}${x.row.details?.[x.field!] ? `: ${x.row.details[x.field!]}` : ""}.${ending(x)}`);
+      for (const x of hs) flag(`${unv(x.note)}rule ${id}`, `${x.say}. Expected ${x.want}, got ${x.got}, on ${x.row.id}${x.row.details?.[x.field!] ? `: ${x.row.details[x.field!]}` : ""}.${ending(x)}`);
     } else if (h.field) {
       const sets = new Map<string, typeof hs>();
       for (const x of hs) { const k = `${x.want}|${x.got}`; (sets.get(k) ?? sets.set(k, []).get(k)!).push(x); }
-      for (const l of sets.values()) flag(`rule ${id}`, `${l[0].say}. Expected ${l[0].want}, drawn ${l[0].got}, on ${l.length} lines: ${l.slice(0, 4).map((x) => quote(x.row)).join(", ")}${l.length > 4 ? ", ..." : ""}.${ending(h)}`);
+      for (const l of sets.values()) flag(`${unv(l[0].note)}rule ${id}`, `${l[0].say}. Expected ${l[0].want}, drawn ${l[0].got}, on ${l.length} lines: ${l.slice(0, 4).map((x) => quote(x.row)).join(", ")}${l.length > 4 ? ", ..." : ""}.${ending(h)}`);
     } else {
       const ex = hs.slice(0, 4).map((x) => `${quote(x.row)}${x.evidence?.length ? ` beside ${x.evidence.slice(0, 2).map(quote).join(", ")}` : ""}`).join("; ");
-      flag(`rule ${id}`, `${h.say}. ${hs.length} ${hs.length === 1 ? "line" : "lines"}: ${ex}${hs.length > 4 ? "; ..." : ""}.${ending(h)}`);
+      flag(`${unv(h.note)}rule ${id}`, `${h.say}. ${hs.length} ${hs.length === 1 ? "line" : "lines"}: ${ex}${hs.length > 4 ? "; ..." : ""}.${ending(h)}`);
     }
   }
   // ---------- ledger ----------
